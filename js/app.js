@@ -1,10 +1,10 @@
-import { extractPages, parseStatement, detectBank, counterparty } from './parser.js?v=20261113d';
-import * as E from './engine.js?v=20261113d';
-import { fetchRatesLive, fxStats } from './fx.js?v=20261113d';
-import { makeDemo } from './demo.js?v=20261113d';
-import { lookupMany, webSearchUrl } from './lookup.js?v=20261113d';
-import * as V from './visa.js?v=20261113d';
-import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261113d';
+import { extractPages, parseStatement, detectBank, counterparty } from './parser.js?v=20261113e';
+import * as E from './engine.js?v=20261113e';
+import { fetchRatesLive, fxStats } from './fx.js?v=20261113e';
+import { makeDemo } from './demo.js?v=20261113e';
+import { lookupMany, webSearchUrl } from './lookup.js?v=20261113e';
+import * as V from './visa.js?v=20261113e';
+import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261113e';
 
 const VISA_LIVING_AUD = 29710; // Home Affairs 12-month living cost for a primary student (checked Nov 2026)
 const WORK_LIMIT = 48;         // hours per fortnight while the course is in session (condition 8105)
@@ -39,10 +39,37 @@ function applySeed(force) {
 }
 
 function load() {
-  try { const raw = localStorage.getItem(STORE); if (raw) return deepMerge(defaults(), JSON.parse(raw)); } catch (e) { /* storage unavailable */ }
+  try { const raw = localStorage.getItem(STORE); if (raw) return repair(deepMerge(defaults(), JSON.parse(raw))); } catch (e) { /* storage unavailable */ }
   return defaults();
 }
-function save() { try { localStorage.setItem(STORE, JSON.stringify(S)); } catch (e) { /* ignore */ } }
+/** Self-repair: one row per bank + date + amounts + running balance. A copy missing its account
+ *  number (read by an older version) gives way to the one that has it. */
+function repair(st) {
+  if (!Array.isArray(st.txns)) return st;
+  const acctByBank = {};
+  st.txns.forEach(t => { if (t.acct) (acctByBank[t.bank] ??= new Set()).add(t.acct); });
+  const best = new Map();
+  for (const t of st.txns) {
+    const k = [t.bank, t.date, t.debit, t.credit, t.balance].join('|');
+    const cur = best.get(k);
+    if (!cur || (!cur.acct && t.acct)) best.set(k, t);
+  }
+  if (best.size !== st.txns.length) {
+    const before = st.txns.length;
+    st.txns = st.txns.filter(t => best.get([t.bank, t.date, t.debit, t.credit, t.balance].join('|')) === t);
+    st.repairedRows = (st.repairedRows || 0) + before - st.txns.length;
+  }
+  for (const t of st.txns) if (!t.acct && acctByBank[t.bank]?.size === 1) { t.acct = [...acctByBank[t.bank]][0]; t.id = [t.bank, t.acct, t.date, t.debit, t.credit, t.balance].join('|'); }
+  for (const x of st.statements || []) if (!x.acct && acctByBank[x.bank]?.size === 1) x.acct = [...acctByBank[x.bank]][0];
+  return st;
+}
+let savedAt = 0;
+function save() { try { savedAt = Date.now(); S.savedAt = savedAt; localStorage.setItem(STORE, JSON.stringify(S)); } catch (e) { /* ignore */ } }
+// Another tab saved: take its copy instead of overwriting it later with ours.
+window.addEventListener('storage', e => {
+  if (e.key !== STORE || !e.newValue) return;
+  try { const incoming = JSON.parse(e.newValue); if ((incoming.savedAt || 0) < savedAt) return; S = repair(deepMerge(defaults(), incoming)); derive(); render(); } catch (err) { /* ignore */ }
+});
 function deepMerge(base, over) {
   for (const k in over) {
     if (over[k] && typeof over[k] === 'object' && !Array.isArray(over[k]) && base[k] && typeof base[k] === 'object' && !Array.isArray(base[k])) base[k] = deepMerge(base[k], over[k]);
@@ -864,8 +891,8 @@ function checkList(c) {
 let pdfjs;
 async function getPdfjs() {
   if (pdfjs) return pdfjs;
-  pdfjs = await import('../vendor/pdf.min.js?v=20261113d');
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261113d', import.meta.url).href;
+  pdfjs = await import('../vendor/pdf.min.js?v=20261113e');
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261113e', import.meta.url).href;
   return pdfjs;
 }
 function askPassword(name, wrong) {
