@@ -3,6 +3,8 @@ import * as E from './engine.js';
 import { fetchRatesLive, fxStats } from './fx.js';
 import { makeDemo } from './demo.js';
 import { lookupMany, webSearchUrl } from './lookup.js';
+import * as V from './visa.js';
+import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js';
 
 const VISA_LIVING_AUD = 29710; // Home Affairs 12-month living cost for a primary student (checked Nov 2026)
 const WORK_LIMIT = 48;         // hours per fortnight while the course is in session (condition 8105)
@@ -10,11 +12,11 @@ const STORE = 'rupeeroo.v1';
 
 // ---------------- state ----------------
 const defaults = () => ({
-  txns: [], statements: [], rules: {}, txnOverrides: {}, fixedOverrides: {}, demo: false,
+  txns: [], statements: [], rules: {}, notes: {}, txnOverrides: {}, fixedOverrides: {}, demo: false,
   lookups: {},
   settings: { city: 'Nagpur', savingsGoal: 10000, incomeOverride: null, oneOff: 15000, bigTransfer: 50000, holderNames: [], primary: 'INR', alertPct: 0.25, notify: false, theme: 'auto' },
   fx: { history: {}, last: null, manual: null, notified: {} },
-  sydney: { extraFunds: 0, hourly: 26, anchor: '2027-02-15', breaks: {}, hours: [], loan: { principal: 4000000, rate: 10, moratorium: 30, tenure: 180, payDuring: false } },
+  sydney: { extraFunds: 0, arrival: '2027-02-01', courseStart: '2027-02-15', research: false, sessions: null, jobs: [{ id: 'j1', name: 'Casual job', rate: 33.05 }], shifts: [], hours: [], loan: { principal: 4000000, rate: 10, moratorium: 30, tenure: 180, payDuring: false } },
   ui: { tab: 'home', month: null, catFilter: null, q: '' },
 });
 let S = load();
@@ -65,7 +67,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const mLabel = (m, long) => { const [y, mo] = m.split('-'); return MONTHS[+mo - 1] + (long ? ' ' + y : " '" + y.slice(2)); };
 const dLabel = d => `${+d.slice(8)} ${MONTHS[+d.slice(5, 7) - 1]}`;
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }; // local date, not UTC
 const daysIn = m => new Date(+m.slice(0, 4), +m.slice(5, 7), 0).getDate();
 const $ = s => document.querySelector(s);
 
@@ -286,7 +288,7 @@ function viewSpend() {
   const filter = S.ui.catFilter, q = (S.ui.q || '').toLowerCase();
   let list = S.txns.filter(t => t.date.startsWith(m));
   if (filter) list = list.filter(t => t.cat === filter);
-  if (q) list = list.filter(t => (t.desc + ' ' + E.payeeName(t) + ' ' + E.CAT[t.cat].label).toLowerCase().includes(q));
+  if (q) list = list.filter(t => (t.desc + ' ' + E.payeeName(t) + ' ' + E.CAT[t.cat].label + ' ' + (S.notes[t.id] || '')).toLowerCase().includes(q));
   list = list.sort((a, b) => (b.date + String(b.seq).padStart(5, '0')).localeCompare(a.date + String(a.seq).padStart(5, '0')));
   const series = D.months.map(k => ({ k, label: mLabel(k), v: Math.max(0, D.mon[k].spend) }));
   return `
@@ -315,7 +317,7 @@ function txnRow(t) {
   const c = E.CAT[t.cat]; const amt = t.credit ? t.credit : -t.debit;
   const sign = amt > 0 ? 'pos' : '';
   return `<div class="txn" data-action="txn" data-id="${esc(t.id)}"><div class="ic">${c.icon}</div>
-    <div style="min-width:0"><div class="t1">${esc(E.payeeName(t))}${t.fixed ? '<span class="tag">FIXED</span>' : ''}</div><div class="t2">${dLabel(t.date)} · ${c.label} · ${t.bank}</div></div>
+    <div style="min-width:0"><div class="t1">${esc(E.payeeName(t))}${t.fixed ? '<span class="tag">FIXED</span>' : ''}</div><div class="t2">${dLabel(t.date)} · ${c.label} · ${t.bank}</div>${S.notes[t.id] ? `<div class="t2" style="color:var(--text-secondary)">📝 ${esc(S.notes[t.id])}</div>` : ''}</div>
     <div class="amt ${sign}"><span class="num">${amt > 0 ? '+' : '−'}${inr(Math.abs(amt), Math.abs(amt) % 1 ? 2 : 0).replace('−', '')}</span><span class="aud num">${aud(Math.abs(amt))}</span></div></div>`;
 }
 function tableView(head, rows) {
@@ -421,13 +423,6 @@ function viewSydney() {
   const fundsAud = r ? fundsInr / r : 0;
   const pct = Math.min(1, fundsAud / VISA_LIVING_AUD);
   const needInr = r ? VISA_LIVING_AUD * r : null;
-  // work hours
-  const fStart = E.fortnightStart(S.ui.hoursDate || today(), sy.anchor);
-  const fEnd = new Date(Date.parse(fStart) + 13 * 864e5).toISOString().slice(0, 10);
-  const inF = sy.hours.filter(h => h.date >= fStart && h.date <= fEnd);
-  const used = inF.reduce((s, h) => s + +h.hours, 0);
-  const isBreak = !!sy.breaks[fStart];
-  const hTone = isBreak ? 'good' : used > WORK_LIMIT ? 'critical' : used > 40 ? 'serious' : used > 32 ? 'warning' : 'good';
   const L = sy.loan; const lp = E.loanPlan({ principal: +L.principal, rate: +L.rate, moratoriumMonths: +L.moratorium, tenureMonths: +L.tenure, payInterestDuring: L.payDuring });
   return `
   <div class="card">
@@ -441,24 +436,7 @@ function viewSydney() {
     <div class="tiny muted" style="margin-top:8px">Check the current figure on the Home Affairs student visa page before you lodge; it changes.</div>
   </div>
 
-  <div class="card">
-    <h2>Work hours <small>limit ${WORK_LIMIT} h per fortnight</small></h2>
-    <div class="row"><span class="sub">Fortnight ${dLabel(fStart)} – ${dLabel(fEnd)}</span><span class="badge">${hpIcon(hTone === 'critical' ? 'critical' : hTone)} ${isBreak ? 'Course break: no limit' : `${used} / ${WORK_LIMIT} h`}</span></div>
-    <div class="hp" style="margin-top:6px"><div class="status-${hTone}" style="width:${isBreak ? 100 : Math.max(2, Math.min(100, used / WORK_LIMIT * 100))}%"></div></div>
-    <div class="tiny muted" style="margin-top:6px">${isBreak ? '' : used > WORK_LIMIT ? `⛔ ${used - WORK_LIMIT} h over the limit. This can breach visa condition 8105.` : `${WORK_LIMIT - used} h left this fortnight`} · earnings ${r ? money(used * sy.hourly * r) : 'A$' + (used * sy.hourly).toFixed(0)}</div>
-    <div class="inline-inputs" style="margin-top:10px">
-      <div><label class="field">Date</label><input class="input" type="date" id="hDate" value="${S.ui.hoursDate || today()}" data-input="hoursDate"></div>
-      <div><label class="field">Hours</label><input class="input num" type="number" step="0.25" inputmode="decimal" id="hHours" placeholder="4"></div>
-    </div>
-    <div class="btn-row" style="margin-top:8px"><button class="btn primary" data-action="add-hours">Log hours</button>
-      <label class="switch" style="padding:0 6px"><span class="tiny">Official course break</span><input type="checkbox" data-action="toggle-break" ${isBreak ? 'checked' : ''}></label></div>
-    ${inF.length ? `<table class="mini" style="margin-top:10px">${inF.sort((a, b) => a.date.localeCompare(b.date)).map(h => `<tr><td>${dLabel(h.date)}</td><td class="r">${h.hours} h</td><td class="r"><button class="btn small" data-action="del-hours" data-id="${h.id}">✕</button></td></tr>`).join('')}</table>` : ''}
-    <div class="inline-inputs" style="margin-top:4px">
-      <div><label class="field">Hourly pay (A$)</label><input class="input num" type="number" step="0.5" data-sy="hourly" value="${sy.hourly}"></div>
-      <div><label class="field">First Monday of a fortnight</label><input class="input" type="date" data-sy="anchor" value="${sy.anchor}"></div>
-    </div>
-    <div class="tiny muted" style="margin-top:8px">A fortnight is 14 days starting on a Monday. The limit applies once your course starts, across all jobs.</div>
-  </div>
+  ${workCards()}
 
   <div class="card">
     <h2>Education loan & EMI <small>enter your sanction terms</small></h2>
@@ -477,6 +455,133 @@ function viewSydney() {
     </div>
     <div class="tiny muted" style="margin-top:8px">Uses simple interest during the moratorium (course + grace period) and a standard reducing-balance EMI after. The defaults are placeholders: use the rate and terms on your SBI sanction letter.</div>
   </div>`;
+}
+
+
+// ---------------- Student visa work tracker ----------------
+function visaCal() {
+  const sy = S.sydney;
+  if (!sy.sessions) sy.sessions = V.UNSW_SESSIONS.map(x => ({ ...x }));
+  // move hours logged with the old simple tracker into shifts
+  if (sy.hours?.length) { sy.hours.forEach(h => sy.shifts.push({ id: h.id, date: h.date, hours: +h.hours, jobId: sy.jobs[0]?.id })); sy.hours = []; save(); }
+  return { courseStart: sy.courseStart, research: !!sy.research, sessions: sy.sessions };
+}
+const audFmt = a => 'A$' + (+a).toLocaleString('en-AU', { maximumFractionDigits: 2, minimumFractionDigits: a % 1 ? 2 : 0 });
+const audMoney = a => `<span class="money"><span class="num">${audFmt(a)}</span>${rate() ? `<span class="aud num">${inr(a * rate())}</span>` : ''}</span>`;
+function workCards() {
+  const sy = S.sydney, cal = visaCal(), t = today();
+  const st = V.workStatus(sy.shifts, cal, t);
+  const ern = V.earnings(sy.shifts, sy.jobs, t);
+  const fyMonths = V.monthsResidentInFY(sy.arrival, ern.fyStart);
+  const tax = V.residentTax(ern.fy, ern.fyStart, fyMonths);
+  const L = V.RULES.limit;
+  // headline state
+  let head, tone, sub;
+  if (st.rule === 'before') { head = 'Course not started: no work allowed yet'; tone = 'serious'; sub = `Your student visa doesn't let you work before your course starts on ${dLabel(cal.courseStart)} ${cal.courseStart.slice(0, 4)}.`; }
+  else if (st.rule === 'unlimited') { head = 'Research degree: no hour limit'; tone = 'good'; sub = 'Masters by research and PhD students can work unlimited hours once the course starts.'; }
+  else if (st.rule === 'break') { head = 'Course break: unlimited hours'; tone = 'good'; sub = `You're between terms, so the 48-hour limit doesn't apply.${st.next ? ` It applies again from ${dLabel(st.next.date)} (${esc(st.next.label)}).` : ''}`; }
+  else { const pctUsed = st.used / L; tone = st.used > L ? 'critical' : st.used >= L ? 'critical' : st.used >= V.RULES.warnAt ? 'serious' : pctUsed >= 0.66 ? 'warning' : 'good'; head = `${esc(st.session?.name || 'Term')}: ${L} h per fortnight`; sub = st.next ? `Limit applies until ${dLabel(addDaysUI(st.next.date, -1))}; unlimited from ${dLabel(st.next.date)}.` : ''; }
+  const meter = st.rule === 'limited' ? `
+    <div class="row" style="margin-top:10px"><span class="tiny muted">Busiest fortnight that includes today</span><b class="num">${fmtH(st.used)} / ${L} h</b></div>
+    <div class="hp" style="margin-top:6px" role="meter" aria-valuemin="0" aria-valuemax="${L}" aria-valuenow="${st.used}"><div class="status-${tone}" style="width:${Math.max(2, Math.min(100, st.used / L * 100))}%"></div></div>
+    <div class="tiny muted" style="margin-top:6px">${st.used > L ? `⛔ ${fmtH(st.used - L)} h over the limit.` : st.used >= L ? '🛑 You\'ve hit the limit. No more hours until this fortnight rolls over.' : `You can work <b>${fmtH(st.left)} more hours</b> this week without breaking either fortnight.`}</div>
+    <table class="mini" style="margin-top:8px">${st.wins.map(w => `<tr><td>${dLabel(w.from)} – ${dLabel(w.to)}${w.mixed ? ' <span class="tag">TERM STARTS/ENDS</span>' : ''}</td><td class="r">${fmtH(w.hours)} h</td><td class="r tiny">${w.limited ? (w.hours > L ? '❌ over' : w.hours >= V.RULES.warnAt ? '⚠️ close' : '✅') : 'no limit'}</td></tr>`).join('')}</table>` : '';
+  const alerts = [];
+  st.breaches.forEach(w => alerts.push(['a-bad', '⛔', `Over the limit: ${fmtH(w.hours)} h from ${dLabel(w.from)} to ${dLabel(w.to)}`, 'More than 48 hours in a fortnight during term can breach visa condition 8105. Talk to UNSW Student Support before it happens again.']));
+  if (st.beforeStart.length) alerts.push(['a-bad', '⛔', `${st.beforeStart.length} shift(s) logged before your course starts`, 'Work before the course start date isn\'t allowed on a student visa. Check the date or remove them.']);
+  const futureCheck = sy.shifts.filter(x => x.date > t).map(x => x.date);
+  const plannedBreach = st.history.filter(w => w.limited && w.hours > L && w.to >= t);
+  if (plannedBreach.length && !st.breaches.some(b => b.to < t)) { /* already shown */ }
+  if (st.history.some(w => w.mixed && w.limited && w.hours > L / 2)) alerts.push(['a-info', 'ℹ️', 'A fortnight crosses the start or end of term', 'The app applies the 48-hour limit to the whole fortnight to be safe. If you plan to work long hours right at the end of term, check with UNSW first.']);
+  const shiftsSorted = [...sy.shifts].sort((a, b) => b.date.localeCompare(a.date));
+  const job = id => sy.jobs.find(j => j.id === id);
+  const formDate = S.ui.shiftDate || t;
+  const maxHere = V.maxOnDate(formDate, sy.shifts, cal);
+  const ruleHere = V.dayRule(formDate, cal);
+  return `
+  <div class="card">
+    <h2>🎓 Work rights <small>student visa 500</small></h2>
+    <div class="alert a-${tone === 'good' ? 'good' : tone === 'warning' ? 'warn' : 'bad'}" style="margin-top:0"><span>${tone === 'good' ? '✅' : tone === 'warning' ? '🟡' : '🛑'}</span><span><b>${head}</b>${sub}</span></div>
+    ${meter}
+    ${alerts.map(a => `<div class="alert ${a[0]}"><span>${a[1]}</span><span><b>${esc(a[2])}</b>${esc(a[3])}</span></div>`).join('')}
+    <details class="table-view"><summary>The rules this uses (checked ${V.RULES.checked})</summary>
+      <ul class="tiny" style="padding-left:18px;color:var(--text-secondary)">
+        <li>No work before your course starts.</li>
+        <li>While your course is in session (teaching, study week and exams): at most 48 hours in any fortnight. A fortnight is 14 days starting on a Monday, so every pair of weeks is checked.</li>
+        <li>Unlimited hours in official breaks between terms. If you enrol in a summer or winter term, add it as a term below.</li>
+        <li>All paid work counts, across every job. Compulsory placements that are a registered part of your course don't count; optional ones do.</li>
+        <li>Masters by research and PhD students have no limit once the course starts.</li>
+      </ul>
+      <div class="tiny">${V.RULES.sources.map(([n, u]) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${n}</a>`).join(' · ')}</div>
+      <div class="tiny muted" style="margin-top:4px">Your own visa grant (check VEVO) is what counts. Rules can change, so check Home Affairs each term.</div>
+    </details>
+  </div>
+
+  <div class="card">
+    <h2>Log a shift <small>${formDate > t ? 'planned' : 'worked'}</small></h2>
+    <div class="inline-inputs">
+      <div><label class="field">Date</label><input class="input" type="date" id="shDate" value="${formDate}" data-input="shiftDate"></div>
+      <div><label class="field">Hours</label><input class="input num" type="number" step="0.25" inputmode="decimal" id="shHours" placeholder="4"></div>
+    </div>
+    <div class="inline-inputs">
+      <div><label class="field">Job</label><select class="input" id="shJob">${sy.jobs.map(j => `<option value="${j.id}">${esc(j.name)} (${audFmt(j.rate)}/h)</option>`).join('')}</select></div>
+      <div><label class="field">Pay for this shift (A$, optional)</label><input class="input num" type="number" step="0.01" inputmode="decimal" id="shPay" placeholder="from hourly rate"></div>
+    </div>
+    <label class="switch"><span class="tiny">Compulsory placement for my course (doesn't count to the limit)</span><input type="checkbox" id="shWil"></label>
+    <div class="tiny muted">${ruleHere === 'before' ? '⛔ This date is before your course starts.' : ruleHere === 'limited' ? `On this date you can add up to <b>${fmtH(maxHere)} h</b> and stay within the limit.` : 'No limit applies on this date.'}</div>
+    <button class="btn primary block" style="margin-top:10px" data-action="add-shift">Add shift</button>
+    ${shiftsSorted.length ? `<table class="mini" style="margin-top:12px"><tr><th>Date</th><th>Job</th><th class="r">Hours</th><th class="r">Pay</th><th></th></tr>
+      ${shiftsSorted.slice(0, S.ui.shiftLimit || 12).map(x => `<tr><td>${dLabel(x.date)}${x.date > t ? ' <span class="tag">PLANNED</span>' : ''}${x.wil ? ' <span class="tag">PLACEMENT</span>' : ''}<div class="tiny muted">${V.dayRule(x.date, cal) === 'limited' ? 'term' : V.dayRule(x.date, cal) === 'before' ? 'before course' : 'break'}</div></td><td class="tiny">${esc(job(x.jobId)?.name || '–')}</td><td class="r">${fmtH(+x.hours)}</td><td class="r">${audFmt(V.shiftPay(x, sy.jobs).toFixed(2))}</td><td class="r"><button class="btn small" data-action="del-shift" data-id="${x.id}" aria-label="Delete shift">✕</button></td></tr>`).join('')}</table>
+      ${shiftsSorted.length > (S.ui.shiftLimit || 12) ? `<button class="btn small" style="margin-top:8px" data-action="more-shifts">Show more</button>` : ''}` : ''}
+  </div>
+
+  <div class="card">
+    <h2>💵 Work income <small>${esc(ern.fyLabel)}</small></h2>
+    <div class="grid2">
+      <div class="stat"><div class="k">This week · ${fmtH(ern.weekHrs)} h</div><div class="v">${audMoney(ern.week)}</div></div>
+      <div class="stat"><div class="k">This month · ${fmtH(ern.monthHrs)} h</div><div class="v">${audMoney(ern.month)}</div></div>
+      <div class="stat"><div class="k">Financial year · ${fmtH(ern.fyHrs)} h</div><div class="v">${audMoney(ern.fy)}</div></div>
+      <div class="stat"><div class="k">Planned shifts · ${fmtH(ern.plannedHrs)} h</div><div class="v">${audMoney(ern.planned)}</div></div>
+    </div>
+    <div class="tiny muted" style="margin-top:8px">Estimated income tax for ${esc(ern.fyLabel)}: <b>${audFmt(tax.tax)}</b>. This assumes you're an Australian resident for tax purposes (usual for a course of 6 months or more), with a tax-free threshold of ${audFmt(tax.threshold)}${fyMonths < 12 ? ` because you arrive part-way through the year (${fyMonths} months)` : ''}. Offsets and the Medicare levy exemption aren't included. Your employer also pays super on top of your wage.</div>
+    <h3>Jobs</h3>
+    ${sy.jobs.map(j => `<div class="inline-inputs" style="margin-top:6px"><input class="input" value="${esc(j.name)}" data-job="${j.id}" data-field="name" aria-label="Job name"><div class="btn-row" style="flex-wrap:nowrap"><input class="input num" type="number" step="0.01" value="${j.rate}" data-job="${j.id}" data-field="rate" aria-label="Hourly rate A$">${sy.jobs.length > 1 ? `<button class="btn small" data-action="del-job" data-id="${j.id}">✕</button>` : ''}</div></div>`).join('')}
+    <button class="btn small" style="margin-top:8px" data-action="add-job">＋ Add job</button>
+    <div class="tiny muted" style="margin-top:6px">From 1 July 2026 the adult minimum wage is A$26.44 an hour, or A$33.05 for casuals (25% loading). Many award rates are higher, and weekends and public holidays usually pay more.</div>
+  </div>
+
+  <div class="card">
+    <h2>📅 Term dates <small>UNSW</small></h2>
+    <div class="inline-inputs">
+      <div><label class="field">Arrival in Australia</label><input class="input" type="date" data-sy="arrival" value="${sy.arrival || ''}"></div>
+      <div><label class="field">Course starts</label><input class="input" type="date" data-sy="courseStart" value="${sy.courseStart}"></div>
+    </div>
+    <label class="switch"><span>Masters by research or PhD (no hour limit)</span><input type="checkbox" data-sy-check="research" ${sy.research ? 'checked' : ''}></label>
+    <div class="sub">In session (48-hour limit). Anything outside these dates is a break with no limit.</div>
+    <div style="margin-top:6px">${sy.sessions.map((x, i) => `<div style="border-top:1px solid var(--border);padding:8px 0">
+      <div class="row"><input class="input" style="padding:6px 8px;font-size:14px;font-weight:600" value="${esc(x.name)}" data-sess="${i}" data-field="name" aria-label="Term name"><button class="btn small" data-action="del-sess" data-i="${i}" aria-label="Remove term">✕</button></div>
+      <div class="inline-inputs" style="margin-top:6px"><label class="tiny muted">From<input class="input" type="date" style="padding:6px;font-size:13px" value="${x.from}" data-sess="${i}" data-field="from"></label><label class="tiny muted">To (last exam)<input class="input" type="date" style="padding:6px;font-size:13px" value="${x.to}" data-sess="${i}" data-field="to"></label></div></div>`).join('')}</div>
+    <div class="btn-row" style="margin-top:8px"><button class="btn small" data-action="add-sess">＋ Add term</button><button class="btn small" data-action="add-optional">＋ Summer/winter 2028</button><button class="btn small" data-action="reset-sess">Reset to UNSW dates</button></div>
+    <div class="tiny muted" style="margin-top:6px">Loaded from the UNSW academic calendar: 2027 terms (teaching start to last exam day) and the new 2028 semesters. Check myUNSW for your own program's dates; some postgraduate programs differ.</div>
+  </div>`;
+}
+const fmtH = h => (+h).toLocaleString('en-AU', { maximumFractionDigits: 2 });
+const addDaysUI = (d, n) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
+/** Warn when a new shift would push a fortnight over the limit, or hits it exactly. */
+function checkWorkAlerts(added) {
+  const cal = visaCal(); const sy = S.sydney;
+  const rule = V.dayRule(added.date, cal);
+  if (rule === 'before') return notifyUser('Shift is before your course starts', 'Student visa holders can\'t work before the course starts.');
+  if (rule !== 'limited' && !V.windowRule(V.mondayOf(added.date), cal).limited && !V.windowRule(addDaysUI(V.mondayOf(added.date), -7), cal).limited) return;
+  const m1 = V.mondayOf(added.date), m0 = addDaysUI(m1, -7);
+  const worst = Math.max(...[m0, m1].filter(m => V.windowRule(m, cal).limited).map(m => V.windowHours(m, sy.shifts)), 0);
+  if (worst > V.RULES.limit) notifyUser(`Over the 48-hour limit (${fmtH(worst)} h)`, 'This fortnight is over the student visa limit. Move or drop a shift.');
+  else if (worst === V.RULES.limit) notifyUser('You\'ve reached 48 hours this fortnight', 'No more hours until the fortnight rolls over.');
+  else if (worst >= V.RULES.warnAt) notifyUser(`${fmtH(worst)} of 48 hours used`, `${fmtH(V.RULES.limit - worst)} hours left this fortnight.`);
+}
+function notifyUser(title, body) {
+  toast((title.startsWith('Over') || title.includes('before') ? '⛔ ' : '⚠️ ') + title, 6000);
+  try { if (S.settings.notify && 'Notification' in window && Notification.permission === 'granted') new Notification('RupeeRoo · ' + title, { body }); } catch (e) { /* not allowed here */ }
 }
 
 // ---------------- charts ----------------
@@ -570,6 +675,11 @@ function txnSheet(id) {
     <h2>${esc(E.payeeName(t))}</h2>
     <div class="sub">${dLabel(t.date)} ${t.date.slice(0, 4)} · ${t.bank}${t.acct ? ' ••' + t.acct : ''} · balance after ${inr(t.balance, 2)}</div>
     <div class="hero-num num" style="margin-top:10px;font-size:28px">${t.credit ? '+' + inr(t.credit, 2) : '−' + inr(t.debit, 2)}</div><div class="hero-aud">${aud(t.credit || t.debit)}</div>
+    <h3>What was this?</h3>
+    <textarea class="input" id="txnNote" rows="2" placeholder="e.g. dinner with college friends, paid mom back, Yash's birthday gift" data-input="txnNote" data-id="${esc(t.id)}">${esc(S.notes[t.id] || '')}</textarea>
+    <div id="sugBox" class="stack" style="margin-top:8px">${suggestionsHTML(t, cats, S.notes[t.id] || '')}</div>
+    <div class="btn-row" style="margin-top:8px">${claudeMaybeAvailable() ? `<button class="btn small" data-action="ask-claude" data-id="${esc(t.id)}">✨ Ask Claude</button>` : `<button class="btn small" data-action="open-settings-claude">✨ Set up Claude suggestions</button>`}<button class="btn small" data-action="to-suspense">❓ Not sure: keep in Suspense</button></div>
+    <div id="claudeBox" class="tiny" style="margin-top:6px"></div>
     <h3>Category</h3>
     <div class="catgrid">${cats.map(c => `<button class="${c.id === t.cat ? 'on' : ''}" data-action="pick-cat" data-c="${c.id}"><span>${c.icon}</span>${c.label}</button>`).join('')}</div>
     <label class="switch"><span>Apply to all ${same} ${t.debit ? 'payments to' : 'credits from'} this payee, now and in future</span><input type="checkbox" id="applyAll" checked></label>
@@ -577,6 +687,32 @@ function txnSheet(id) {
     <h3>Statement text</h3><div class="raw">${esc([t.type, t.desc, t.ref].filter(Boolean).join(' · '))}</div>
     <div class="btn-row" style="margin-top:14px"><button class="btn primary" data-action="save-txn" data-id="${esc(t.id)}">Save</button><button class="btn" data-action="close-sheet">Cancel</button></div>`);
   S.ui.pickCat = t.cat;
+}
+
+function suggestionsHTML(t, cats, note) {
+  const opts = localSuggest(note, t.debit > 0 ? 'D' : 'C', cats.map(c => c.id));
+  if (!opts.length) return note ? '<div class="tiny muted">No quick match from your note. Try Ask Claude, or pick below.</div>' : '';
+  return `<div class="tiny muted">From your note:</div><div class="btn-row">${opts.map(o => `<button class="chip" data-action="pick-sug" data-c="${o.cat}" title="${esc(o.why)}">${E.CAT[o.cat].icon} ${E.CAT[o.cat].label}</button>`).join('')}</div>`;
+}
+function selectCat(c) {
+  S.ui.pickCat = c;
+  document.querySelectorAll('.catgrid button').forEach(b => b.classList.toggle('on', b.dataset.c === c));
+  document.querySelector(`.catgrid button[data-c="${c}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+async function askClaude(id) {
+  const t = S.txns.find(x => x.id === id); if (!t) return;
+  const box = $('#claudeBox'); const note = $('#txnNote')?.value.trim() || '';
+  const cats = E.CATEGORIES.filter(c => (t.debit > 0 ? !INCOME_CATS.includes(c.id) : [...INCOME_CATS, 'transfer'].includes(c.id)));
+  box.innerHTML = '<span class="muted">Asking Claude…</span>';
+  try {
+    const r = await claudeSuggest({ note, payee: E.payeeName(t), amount: t.debit || t.credit, date: t.date, dir: t.debit > 0 ? 'D' : 'C', cats: cats.map(c => ({ id: c.id, label: c.label })), raw: t.desc.slice(0, 120) });
+    if (!document.body.contains(box)) return;
+    box.innerHTML = `<div class="muted">${r.unsure ? 'Claude isn\'t sure. Best guesses:' : 'Claude suggests:'}</div>
+      <div class="stack" style="margin-top:4px">${r.options.map(o => `<button class="btn small" style="text-align:left;width:100%" data-action="pick-sug" data-c="${o.cat}"><b>${E.CAT[o.cat].icon} ${E.CAT[o.cat].label}</b> <span class="muted">· ${esc(o.why)}</span></button>`).join('')}</div>
+      ${r.unsure ? '<div class="muted" style="margin-top:4px">If none fits, keep it in Suspense and add a note when you remember.</div>' : ''}`;
+  } catch (e) {
+    box.innerHTML = `<span class="bad">${esc(e.code === 'not_granted' ? 'Claude access was not allowed here.' : e.message || 'Claude is unavailable right now.')}</span>`;
+  }
 }
 
 // ---------------- Suspense review ----------------
@@ -605,7 +741,7 @@ function suspenseSheet(keepScroll) {
       const cats = x.dir === 'D' ? spendCats : inCats;
       const tag = x.family ? '👪 same surname' : x.shop ? '🏪 shop' : x.person ? '👤 person' : '';
       return `<div class="txn" style="grid-template-columns:1fr auto;cursor:default">
-        <div style="min-width:0"><div class="t1">${esc(x.name)} <span class="tag">${x.dir === 'D' ? 'PAID' : 'RECEIVED'}</span></div>
+        <div style="min-width:0"><div class="t1" data-action="txn" data-id="${esc(x.sample.id)}" style="cursor:pointer;text-decoration:underline dotted">${esc(x.name)} <span class="tag">${x.dir === 'D' ? 'PAID' : 'RECEIVED'}</span></div>
           <div class="t2">${x.n}× · ${tag}${x.vpa ? ' · ' + esc(x.vpa) : ''} · last ${dLabel(x.last)}</div>
           ${sug ? `<div class="tiny" style="margin-top:4px">💡 ${esc(sug.why)} → <b>${E.CAT[sug.cat].icon} ${E.CAT[sug.cat].label}</b> <button class="btn small" data-action="accept-sug" data-k="${esc(x.key)}">Use</button></div>` : lk?.status === 'miss' ? '<div class="tiny muted" style="margin-top:4px">Not found on OpenStreetMap</div>' : ''}
           <div class="btn-row" style="margin-top:6px;align-items:center">
@@ -663,6 +799,12 @@ function settingsSheet() {
     <label class="switch"><span>Theme</span><select class="input" style="width:auto" data-action="theme">${['auto', 'light', 'dark'].map(t => `<option ${S.settings.theme === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
     <label class="field">Count one transfer to someone else above this as "large transfer" and leave it out of spending (₹)</label>
     <input class="input num" type="number" id="bigTransfer" value="${S.settings.bigTransfer}">
+    <h3>✨ Claude suggestions</h3>
+    <div class="sub">When you write what a payment was, Claude can suggest a category. It sees only your note, the payee name, amount and date, never account numbers or balances.</div>
+    ${typeof window.claude?.use === 'function' ? '<div class="tiny ok" style="margin-top:6px">✓ Running inside Claude, so this works without a key.</div>' : ''}
+    <label class="field">Anthropic API key (for the GitHub version)</label>
+    <div class="inline-inputs"><input class="input" id="apiKey" type="password" autocomplete="off" placeholder="sk-ant-…" value="${getApiKey() ? '••••••••' + getApiKey().slice(-4) : ''}"><div class="btn-row"><button class="btn primary" data-action="save-key">Save</button>${getApiKey() ? '<button class="btn" data-action="save-key-clear">Remove</button>' : ''}</div></div>
+    <div class="tiny muted" style="margin-top:6px">Create one at console.anthropic.com → API keys, and set a small monthly spend limit there. Each suggestion costs a fraction of a cent. The key stays in this browser only and is never included in backups.</div>
     <h3>Backup</h3>
     <div class="sub">Everything lives in this browser only. Export a backup before clearing your browser or switching phones.</div>
     <div class="btn-row" style="margin-top:8px"><button class="btn" data-action="export">⬇️ Export backup</button><button class="btn" data-action="import-json">⬆️ Restore backup</button></div>
@@ -803,6 +945,7 @@ document.addEventListener('click', async e => {
     case 'save-txn': {
       const t = S.txns.find(x => x.id === el.dataset.id);
       const all = $('#applyAll')?.checked;
+      const note = $('#txnNote')?.value.trim(); if (note) S.notes[t.id] = note; else delete S.notes[t.id];
       if (S.ui.pickCat && S.ui.pickCat !== t.cat) {
         if (all) { S.rules[t.payee] = { cat: S.ui.pickCat, dir: t.debit > 0 ? 'D' : 'C' }; S.txns.filter(x => x.payee === t.payee).forEach(x => delete S.txnOverrides[x.id]); }
         else S.txnOverrides[t.id] = S.ui.pickCat;
@@ -811,6 +954,12 @@ document.addEventListener('click', async e => {
       if (ft && ft.checked !== t.fixed) S.fixedOverrides[t.payee] = ft.checked;
       derive(); save(); closeSheet(); render(); toast('Saved'); break;
     }
+    case 'pick-sug': selectCat(el.dataset.c); break;
+    case 'to-suspense': { const t = S.txns.find(x => x.id === document.querySelector('[data-action="save-txn"]')?.dataset.id); selectCat(t && t.credit > 0 ? 'suspense_in' : 'suspense'); toast('Will stay in Suspense'); break; }
+    case 'ask-claude': askClaude(el.dataset.id); break;
+    case 'open-settings-claude': settingsSheet(); setTimeout(() => $('#apiKey')?.scrollIntoView({ block: 'center' }), 50); break;
+    case 'save-key-clear': setApiKey(''); settingsSheet(); toast('Key removed'); break;
+    case 'save-key': { if (/^••••/.test($('#apiKey').value)) { toast('Key already saved'); break; } const k = $('#apiKey').value.trim(); if (k && !/^sk-ant-/.test(k)) { toast('That doesn\'t look like an Anthropic key (starts with sk-ant-)'); break; } setApiKey(k); settingsSheet(); toast(k ? 'Claude suggestions on' : 'Key removed'); break; }
     case 'unfix': el.dataset.k.split(',').forEach(k => (S.fixedOverrides[k] = false)); derive(); save(); render(); toast('Removed from fixed costs'); break;
     case 'save-settings': {
       const hn = $('#holderNames')?.value; if (hn != null) S.settings.holderNames = hn.split(',').map(s => s.trim()).filter(Boolean);
@@ -829,9 +978,20 @@ document.addEventListener('click', async e => {
     }
     case 'fx-manual': { const v = parseFloat($('#manualRate').value); if (v > 20 && v < 200) { S.fx.manual = { rate: v, date: today() }; S.fx.history[today()] = v; save(); derive(); render(); toast('Using your rate'); } else toast('Enter a rate like 55.40 (rupees for 1 AUD)'); break; }
     case 'fx-manual-clear': S.fx.manual = null; save(); render(); break;
-    case 'add-hours': { const d = $('#hDate').value, h = parseFloat($('#hHours').value); if (d && h > 0 && h <= 24) { S.sydney.hours.push({ id: Date.now().toString(36), date: d, hours: h }); S.ui.hoursDate = d; save(); render(); } else toast('Enter the date and hours worked'); break; }
-    case 'del-hours': S.sydney.hours = S.sydney.hours.filter(h => h.id !== el.dataset.id); save(); render(); break;
-    case 'toggle-break': { const fs = E.fortnightStart(S.ui.hoursDate || today(), S.sydney.anchor); if (el.checked) S.sydney.breaks[fs] = true; else delete S.sydney.breaks[fs]; save(); render(); break; }
+    case 'add-shift': {
+      const d = $('#shDate').value, h = parseFloat($('#shHours').value), pay = $('#shPay').value;
+      if (!d || !(h > 0) || h > 24) { toast('Enter the date and the hours (up to 24)'); break; }
+      const sh = { id: Date.now().toString(36), date: d, hours: h, jobId: $('#shJob').value, pay: pay === '' ? null : +pay, wil: $('#shWil').checked };
+      S.sydney.shifts.push(sh); S.ui.shiftDate = d; save(); render(); checkWorkAlerts(sh); break;
+    }
+    case 'del-shift': S.sydney.shifts = S.sydney.shifts.filter(h => h.id !== el.dataset.id); save(); render(); break;
+    case 'more-shifts': S.ui.shiftLimit = (S.ui.shiftLimit || 12) + 20; render(); break;
+    case 'add-job': S.sydney.jobs.push({ id: 'j' + Date.now().toString(36), name: 'New job', rate: 33.05 }); save(); render(); break;
+    case 'del-job': S.sydney.jobs = S.sydney.jobs.filter(j => j.id !== el.dataset.id); save(); render(); break;
+    case 'add-sess': visaCal(); S.sydney.sessions.push({ name: 'New term', from: today(), to: today() }); save(); render(); break;
+    case 'add-optional': visaCal(); V.UNSW_OPTIONAL.forEach(o => { if (!S.sydney.sessions.some(x => x.name === o.name)) S.sydney.sessions.push({ ...o }); }); S.sydney.sessions.sort((a, b) => a.from.localeCompare(b.from)); save(); render(); break;
+    case 'del-sess': S.sydney.sessions.splice(+el.dataset.i, 1); save(); render(); break;
+    case 'reset-sess': S.sydney.sessions = V.UNSW_SESSIONS.map(x => ({ ...x })); save(); render(); toast('UNSW term dates restored'); break;
   }
 });
 document.addEventListener('change', e => {
@@ -842,11 +1002,15 @@ document.addEventListener('change', e => {
   if (el.dataset.setting) { const v = el.value === '' ? null : +el.value; S.settings[el.dataset.setting] = el.dataset.setting === 'incomeOverride' ? v : (v ?? 0); derive(); save(); render(); }
   else if (el.dataset.sy) { S.sydney[el.dataset.sy] = el.type === 'number' ? +el.value : el.value; save(); render(); }
   else if (el.dataset.loan) { S.sydney.loan[el.dataset.loan] = el.type === 'checkbox' ? el.checked : +el.value; save(); render(); }
-  else if (el.dataset.input === 'hoursDate') { S.ui.hoursDate = el.value; save(); render(); }
+  else if (el.dataset.input === 'shiftDate') { S.ui.shiftDate = el.value; save(); render(); }
+  else if (el.dataset.syCheck) { S.sydney[el.dataset.syCheck] = el.checked; save(); render(); }
+  else if (el.dataset.job) { const j = S.sydney.jobs.find(x => x.id === el.dataset.job); if (j) { j[el.dataset.field] = el.dataset.field === 'rate' ? +el.value : el.value; save(); render(); } }
+  else if (el.dataset.sess != null) { const x = S.sydney.sessions[+el.dataset.sess]; if (x) { x[el.dataset.field] = el.value; S.sydney.sessions.sort((a, b) => a.from.localeCompare(b.from)); save(); render(); } }
   else if (el.dataset.action === 'theme') { S.settings.theme = el.value; applyTheme(); save(); }
 });
 document.addEventListener('input', e => {
   const el = e.target;
+  if (el.dataset.input === 'txnNote') { const t = S.txns.find(x => x.id === el.dataset.id); if (t) { const cats = E.CATEGORIES.filter(c => (t.debit > 0 ? !INCOME_CATS.includes(c.id) : [...INCOME_CATS, 'transfer'].includes(c.id))); $('#sugBox').innerHTML = suggestionsHTML(t, cats, el.value); } return; }
   if (el.dataset.input === 'q') { S.ui.q = el.value; const pos = el.selectionStart; render(); const s = document.querySelector('.search'); s.focus(); s.setSelectionRange(pos, pos); }
   if (el.dataset.conv) {
     const r = rate(); if (!r) return;

@@ -19,6 +19,8 @@ export const CATEGORIES = [
   ['fun', 'Entertainment', '🎮', 'spend'],
   ['people', 'Paid to people', '🤝', 'spend'],
   ['family', 'Family', '👪', 'spend'],
+  ['friends', 'Friends', '🧑‍🤝‍🧑', 'spend'],
+  ['gifts', 'Gifts', '🎁', 'spend'],
   ['insurance', 'Insurance', '🛡️', 'spend'],
   ['suspense', 'Suspense (to sort)', '❓', 'spend'],
   ['cash', 'Cash withdrawal', '💵', 'spend'],
@@ -27,6 +29,7 @@ export const CATEGORIES = [
   ['invest', 'Investments & SIPs', '📈', 'invest'],
   ['bigtransfer', 'Large transfers out', '🔀', 'excluded'],
   ['cardbill', 'Credit card bill', '💳', 'excluded'],
+  ['lent', 'Lent (to get back)', '🔁', 'excluded'],
   ['salary', 'Salary', '💼', 'income'],
   ['interest', 'Interest & dividends', '🪙', 'income'],
   ['refund', 'Refunds', '↩️', 'income'],
@@ -168,7 +171,7 @@ export function monthsBetween(a, b) {
 /** Recurring payments: same payee and amount (±5%) seen in 3+ distinct months, still active. */
 export function findRecurring(txns, ctx) {
   // everyday categories can repeat by coincidence (₹40 chai), so only bill-like categories qualify unless the user says so
-  const NOT_FIXED = ['transfer', 'bigtransfer', 'cardbill', 'charges', 'food', 'groceries', 'local', 'transport', 'fun', 'shopping', 'cash', 'personal', 'travel', 'people'];
+  const NOT_FIXED = ['transfer', 'bigtransfer', 'cardbill', 'lent', 'friends', 'gifts', 'charges', 'food', 'groceries', 'local', 'transport', 'fun', 'shopping', 'cash', 'personal', 'travel', 'people'];
   const spend = txns.filter(t => (ctx.fixedOverrides?.[t.payee] === true) || (t.debit >= (t.cat === 'suspense' ? 500 : 99) && !NOT_FIXED.includes(t.cat)));
   const lastByBank = {};
   txns.forEach(t => { if (!lastByBank[t.bank] || t.date > lastByBank[t.bank]) lastByBank[t.bank] = t.date; });
@@ -294,7 +297,7 @@ export function quests(mon, month, prevMonth, ctx) {
   const cur = mon[month], prev = mon[prevMonth];
   if (!cur) return [];
   const q = [];
-  const topCats = prev ? Object.entries(prev.byCat).filter(([c]) => !['charges', 'people', 'other', 'suspense', 'family', 'insurance', 'emi'].includes(c)).sort((a, b) => b[1] - a[1]).slice(0, 2) : [];
+  const topCats = prev ? Object.entries(prev.byCat).filter(([c]) => !['charges', 'people', 'other', 'suspense', 'family', 'friends', 'gifts', 'insurance', 'emi'].includes(c)).sort((a, b) => b[1] - a[1]).slice(0, 2) : [];
   for (const [c, v] of topCats) {
     const target = Math.round(v * 0.9 / 100) * 100;
     const now = cur.byCat[c] || 0;
