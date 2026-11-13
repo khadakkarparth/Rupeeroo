@@ -7,7 +7,7 @@ export function makeDemo(endDate = new Date()) {
   const holder = 'DEMO KUMAR SHARMA';
   const rows = { SBI: [], IndusInd: [] };
   const add = (bank, date, debit, credit, desc, type = debit ? 'WDL TFR' : 'DEP TFR') => rows[bank].push({ date, debit: +debit.toFixed(2), credit: +credit.toFixed(2), desc, type });
-  const upiS = (dir, name, bankc, vpa) => `UPI/${dir}/${ref()}/${name}/${bankc}/${vpa}/UPI`;
+  const upiS = (dir, name, bankc, vpa, note = 'UPI') => `UPI/${dir}/${ref()}/${name}/${bankc}/${vpa}/${note}`;
   const upiI = (dir, name, bankc, vpa) => `UPI/${ref()}/${dir}/${name}/${bankc}/${vpa}`;
 
   const end = new Date(Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate() - 3));
@@ -15,7 +15,7 @@ export function makeDemo(endDate = new Date()) {
   for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 864e5)) {
     const ds = d.toISOString().slice(0, 10), dom = d.getUTCDate(), dow = d.getUTCDay();
     if (dom === 1) add('SBI', ds, 0, 58000, 'N/SBIN' + ref() + '/ACME ANALYTICS PVT LTD', 'DEP TFR');
-    if (dom === 3) add('SBI', ds, 14000, 0, upiS('DR', 'MRSSHARMA', 'HDFC', 'flatowner@okhdfcbank'));
+    if (dom === 3) add('SBI', ds, 14000, 0, upiS('DR', 'MRSSHARMA', 'HDFC', 'flatowner@okhdfcbank', 'Rent'));
     if (dom === 5) { add('SBI', ds, 12000, 0, `IMPS/P2A/${ref()}/INDB/DEMO KUMAR SHARMA`); add('IndusInd', ds, 0, 12000, `IMPS/P2A/${ref()}/SBIN/DEMO KUMAR SHARMA`, ''); }
     if (dom === 6) add('IndusInd', ds, 2500, 0, upiI('DR', 'FITZONE GYM', 'ICIC', 'fitzone.gym@icici'), '');
     if (dom === 10) add('SBI', ds, 5000, 0, 'NACH00000000012345 NSEClearingLTD');

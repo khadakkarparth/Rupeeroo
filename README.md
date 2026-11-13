@@ -14,6 +14,8 @@ exchange-rate APIs. There is no server and no account.
 |---|---|
 | Import | Reads SBI and IndusInd PDF statements (password-protected ones too). Every row is checked against the running balance; SBI imports are also reconciled with the bank's own debit/credit totals. Re-importing the same statement skips duplicates. |
 | Categories | Rules for Indian payees (UPI handles, Swiggy, Blinkit, NACH SIPs, FASTag, etc.). Fix one transaction and the rule is remembered for that payee. Transfers between your own accounts are matched across banks and left out of spending. |
+| Suspense & lookup | Anything the built-in merchant list can't name goes to Suspense. A review screen sorts payees biggest first: pick a category once per payee, accept suggestions (same surname → Family, or an OpenStreetMap match), or tap Search web. The OpenStreetMap lookup only sends shop names you tick, one per second, and never applies a result without your OK. |
+| SIPs | Finds each SIP instalment (amount and day of month) from repeating auto-debits, shows this month's paid / due / bounced status, and flags bounced SIPs with the bank's penalty charges. SIPs count as savings; an extra savings goal sits on top. |
 | Dashboard | Spending by month and by category, with a table view for every chart. |
 | Plan | Fixed costs found from payments that repeat with the same amount in 3+ months. A 30-day forecast of everyday spending built by resampling your last 90 days (10th–90th percentile range). Safe to spend = income − fixed − savings goal − spent so far. |
 | ₹ / A$ | Every amount in both currencies. Live mid-market rate from Coinbase's public API, refreshed every minute while the app is open, with today's low and high. 7- and 30-day lows and highs from ECB daily rates (frankfurter.dev; fallback open.er-api.com). Alerts when the rate is near a low or high. Manual rate entry when offline. |
@@ -50,6 +52,7 @@ index.html            app shell and Content Security Policy
 css/app.css           mobile-first styles, light and dark
 js/parser.js          PDF → transactions (SBI, IndusInd) and checks
 js/engine.js          categories, transfers, recurring costs, forecast, game, loan maths
+js/lookup.js          optional OpenStreetMap lookup for shop names
 js/fx.js              live rate (Coinbase), daily history (ECB), lows/highs and alerts
 js/app.js             UI, storage, import flow
 js/demo.js            synthetic data for demos (no real person or account)

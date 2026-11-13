@@ -1,7 +1,8 @@
-import { extractPages, parseStatement, detectBank } from './parser.js';
+import { extractPages, parseStatement, detectBank, counterparty } from './parser.js';
 import * as E from './engine.js';
 import { fetchRatesLive, fxStats } from './fx.js';
 import { makeDemo } from './demo.js';
+import { lookupMany, webSearchUrl } from './lookup.js';
 
 const VISA_LIVING_AUD = 29710; // Home Affairs 12-month living cost for a primary student (checked Nov 2026)
 const WORK_LIMIT = 48;         // hours per fortnight while the course is in session (condition 8105)
@@ -10,7 +11,8 @@ const STORE = 'rupeeroo.v1';
 // ---------------- state ----------------
 const defaults = () => ({
   txns: [], statements: [], rules: {}, txnOverrides: {}, fixedOverrides: {}, demo: false,
-  settings: { savingsGoal: 10000, incomeOverride: null, oneOff: 15000, bigTransfer: 50000, holderNames: [], primary: 'INR', alertPct: 0.25, notify: false, theme: 'auto' },
+  lookups: {},
+  settings: { city: 'Nagpur', savingsGoal: 10000, incomeOverride: null, oneOff: 15000, bigTransfer: 50000, holderNames: [], primary: 'INR', alertPct: 0.25, notify: false, theme: 'auto' },
   fx: { history: {}, last: null, manual: null, notified: {} },
   sydney: { extraFunds: 0, hourly: 26, anchor: '2027-02-15', breaks: {}, hours: [], loan: { principal: 4000000, rate: 10, moratorium: 30, tenure: 180, payDuring: false } },
   ui: { tab: 'home', month: null, catFilter: null, q: '' },
@@ -81,7 +83,9 @@ function derive() {
   const months = Object.keys(mon).sort();
   const dataEnd = tx.reduce((m, t) => (t.date > m ? t.date : m), '');
   if (!S.ui.month || !mon[S.ui.month]) S.ui.month = months[months.length - 1] || null;
-  const fixedTotal = recurring.reduce((s, r) => s + r.amount, 0);
+  const bills = recurring.filter(r => r.cat !== 'invest');
+  const fixedTotal = bills.reduce((s, r) => s + r.amount, 0);
+  const sip = E.sipPlan(tx, today());
   const incomeAuto = E.incomeEstimate(tx);
   const income = S.settings.incomeOverride ?? incomeAuto;
   const fc = E.forecast(tx, { oneOff: S.settings.oneOff });
@@ -89,8 +93,23 @@ function derive() {
   const totalSpend = Object.values(mon).reduce((s, m) => s + m.spend, 0);
   const saved = Math.max(0, totalIncome - totalSpend);
   const balances = latestBalances();
-  D = { recurring, mon, months, dataEnd, fixedTotal, income, incomeAuto, fc, saved, balances };
+  const suspense = suspenseGroups(tx);
+  D = { recurring, bills, mon, months, dataEnd, fixedTotal, sip, sipTotal: sip.monthly, income, incomeAuto, fc, saved, balances, suspense };
 }
+
+/** Payees still in Suspense, biggest first, with what we know about each. */
+function suspenseGroups(tx) {
+  const g = {};
+  for (const t of tx) {
+    if (t.cat !== 'suspense' && t.cat !== 'suspense_in') continue;
+    const dir = t.debit > 0 ? 'D' : 'C';
+    const k = t.payee + '|' + dir;
+    const c = g[k] ??= { key: k, payee: t.payee, dir, name: E.payeeName(t), vpa: counterpartyVpa(t), n: 0, amt: 0, last: t.date, shop: E.isShopLike(t), person: E.isPersonLike(t), family: E.surnameHint(t, S.settings.holderNames), sample: t };
+    c.n++; c.amt += t.debit || t.credit; if (t.date > c.last) c.last = t.date;
+  }
+  return Object.values(g).sort((a, b) => b.amt - a.amt);
+}
+function counterpartyVpa(t) { return (counterparty(t).vpa || '').slice(0, 30); }
 
 function latestBalances() {
   const by = {};
@@ -108,7 +127,7 @@ function monthCtx(m) {
   else if (isLatest && D.dataEnd.startsWith(m)) day = +D.dataEnd.slice(8);
   const spentVar = S.txns.filter(t => t.date.startsWith(m) && t.debit > 0 && E.CAT[t.cat]?.kind === 'spend' && !t.fixed && t.debit < S.settings.oneOff).reduce((s, t) => s + t.debit, 0);
   const oneOffs = S.txns.filter(t => t.date.startsWith(m) && t.debit >= S.settings.oneOff && E.CAT[t.cat]?.kind === 'spend' && !t.fixed);
-  const sts = E.safeToSpend({ income: D.income, fixedTotal: D.fixedTotal, savingsGoal: S.settings.savingsGoal, spentVariable: spentVar, daysLeft: dim - day });
+  const sts = E.safeToSpend({ income: D.income, fixedTotal: D.fixedTotal + D.sipTotal, savingsGoal: S.settings.savingsGoal, spentVariable: spentVar, daysLeft: dim - day });
   const hp = E.health(sts.monthlyAllowance, spentVar, day, dim);
   const monthOver = day >= dim;
   return { mo, dim, day, spentVar, oneOffs, sts, hp, monthOver, isLatest };
@@ -171,6 +190,11 @@ function viewHome() {
   const st = E.streaks(S.txns, Math.max(0, c.sts.monthlyAllowance / c.dim), m);
   const months = D.months; const prev = months[months.indexOf(m) - 1];
   const qs = E.quests(D.mon, m, prev, { fmt: fmtPlain, savingsGoal: S.settings.savingsGoal, noSpendMonth: st.noSpendMonth, monthOver: c.monthOver });
+  const sm = D.sip.months[m];
+  if (sm && D.sipTotal) {
+    const expected = sm.rows.reduce((a, r) => a + r.amount * r.count, 0);
+    qs.unshift({ id: 'sip', icon: '📈', title: `All SIPs go through (${fmtPlain(expected)})`, sub: 'Keep enough balance before each auto-debit', progress: Math.min(1, sm.paid / expected), done: sm.paid >= expected, failed: sm.missed > 0, xp: 200, kind: 'sip' });
+  }
   const qxp = qs.filter(q => q.done).reduce((s, q) => s + q.xp, 0);
   const remaining = c.sts.remaining;
   const ring = ringSvg(lvl.pct);
@@ -182,9 +206,11 @@ function viewHome() {
     <div class="hero-aud num">${S.settings.primary === 'AUD' && rate() ? inr(remaining) : aud(remaining)}${!c.monthOver && c.sts.perDay ? ` · about ${fmtPlain(c.sts.perDay)} a day` : ''}</div>
     <div style="margin-top:14px" class="row"><span class="tiny muted">Budget health</span><span class="badge">${hpIcon(c.hp.status)} ${c.hp.label} · ${c.hp.hp} HP</span></div>
     <div class="hp" style="margin-top:6px" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${c.hp.hp}" aria-label="Budget health"><div class="status-${c.hp.status}" style="width:${Math.max(2, c.hp.hp)}%"></div></div>
-    <div class="tiny muted" style="margin-top:8px">${fmtPlain(D.income)} income − ${fmtPlain(D.fixedTotal)} fixed − ${fmtPlain(S.settings.savingsGoal)} savings goal = ${fmtPlain(c.sts.monthlyAllowance)} for everyday spending. Spent ${fmtPlain(c.spentVar)} so far.</div>
+    <div class="tiny muted" style="margin-top:8px">${fmtPlain(D.income)} income − ${fmtPlain(D.fixedTotal)} bills − ${fmtPlain(D.sipTotal)} SIPs − ${fmtPlain(S.settings.savingsGoal)} extra savings = ${fmtPlain(c.sts.monthlyAllowance)} for everyday spending. Spent ${fmtPlain(c.spentVar)} so far.</div>
     ${c.oneOffs.length ? `<div class="tiny muted" style="margin-top:6px">Not counted as everyday: ${c.oneOffs.map(t => esc(E.payeeName(t)) + ' ' + inr(t.debit)).join(', ')}.</div>` : ''}
   </div>
+  ${sipCard(m, true)}
+  ${suspenseCard()}
 
   <div class="card">
     <div class="level">
@@ -221,6 +247,32 @@ function viewHome() {
     <button class="btn block" style="margin-top:12px" data-action="pick-pdf">＋ Add more statements</button>
   </div>`;
 }
+function sipCard(m, compact) {
+  const sp = D.sip; if (!sp?.slots.length) return '';
+  const sm = sp.months[m];
+  const badMonths = Object.entries(sp.months).filter(([, v]) => v.missed > 0);
+  const st = { paid: ['✅', 'Paid'], due: ['⏳', 'Due'], missed: ['❌', 'Bounced'], partial: ['⚠️', 'Part paid'], unknown: ['…', 'Not in statement yet'] };
+  const rows = sm ? sm.rows.map(r => `<tr><td>${st[r.status][0]} ${r.count > 1 ? r.count + '× ' : ''}${inr(r.amount)}<div class="tiny muted">${esc(r.name)}</div></td><td class="tiny">${dLabel(r.dueDate)}</td><td class="r tiny">${st[r.status][1]}</td></tr>`).join('') : '';
+  const alert = sm?.missed ? `<div class="alert a-bad"><span>🚨</span><span><b>${inr(sm.missed)} of SIPs bounced in ${mLabel(m, true)}</b> ${sm.charges ? `and the bank charged ${inr(sm.charges, 2)} for it. ` : ''}Keep the balance up before the ${[...new Set(sm.rows.filter(r => r.missedAmt).map(r => ord(r.day)))].join(' and ')}.</span></div>` : '';
+  const history = badMonths.length ? `<div class="tiny muted" style="margin-top:6px">Missed so far: ${badMonths.map(([mm, v]) => `${mLabel(mm)} ${inr(v.missed)}${v.charges ? ` (+${inr(v.charges, 0)} charges)` : ''}`).join(', ')}.</div>` : `<div class="tiny muted" style="margin-top:6px">No bounced SIPs in your statements.</div>`;
+  return `<div class="card">
+    <h2>📈 SIPs <small>${money(sp.monthly)} / month</small></h2>
+    ${alert}
+    ${rows ? `<table class="mini">${rows}</table>` : ''}
+    ${history}
+    ${compact ? '' : `<div class="tiny muted" style="margin-top:6px">Found from auto-debits that repeat on the same day each month. They count as savings, and your extra savings goal sits on top.</div>`}
+  </div>`;
+}
+function suspenseCard() {
+  const s = D.suspense; if (!s?.length) return '';
+  const total = s.filter(x => x.dir === 'D').reduce((a, x) => a + x.amt, 0);
+  const sugg = s.filter(x => S.lookups[x.payee]?.status === 'hit' || x.family).length;
+  return `<div class="card">
+    <h2>❓ Suspense <small>${s.length} payees</small></h2>
+    <div class="sub">${inr(total)} of spending couldn't be matched to a category yet. Sort the biggest ones and the rest of your numbers get sharper.${sugg ? ` ${sugg} have a suggestion ready.` : ''}</div>
+    <button class="btn primary block" style="margin-top:10px" data-action="open-suspense">Sort Suspense</button>
+  </div>`;
+}
 const hpIcon = s => ({ good: '💚', warning: '🟡', serious: '🟠', critical: '🔴' }[s]);
 function ringSvg(p) {
   const r = 24, c = 2 * Math.PI * r;
@@ -244,6 +296,7 @@ function viewSpend() {
     ${tableView(['Month', 'Spent', 'Income', 'Invested'], D.months.map(k => [mLabel(k, true), inr(D.mon[k].spend), inr(D.mon[k].income), inr(D.mon[k].invest)]))}
   </div>
   ${monthChips()}${coverageNote(m)}
+  ${suspenseCard()}
   <div class="card">
     <h2>Where it went in ${mLabel(m, true)} <small>${money(mo.spend)}</small></h2>
     ${cats.map(([c, v]) => `<div class="cbar" data-action="cat" data-c="${c}" title="${esc(E.CAT[c].label)}: ${inr(v)} (${Math.round(v / mo.spend * 100)}%)">
@@ -272,7 +325,7 @@ function tableView(head, rows) {
 function viewPlan() {
   const m = S.ui.month, c = monthCtx(m), fc = D.fc;
   const rec = [];
-  for (const r of D.recurring) {
+  for (const r of D.bills) {
     const g = rec.find(x => x.name === r.name);
     if (g) { g.amount += r.amount; g.parts.push(r); g.months = Math.max(g.months, r.months); g.keys.push(r.key); }
     else rec.push({ ...r, parts: [r], keys: [r.key] });
@@ -302,22 +355,23 @@ function viewPlan() {
   </div>
 
   <div class="card">
-    <h2>Fixed costs <small>${money(D.fixedTotal)} / month</small></h2>
+    <h2>Fixed bills <small>${money(D.fixedTotal)} / month</small></h2>
     <div class="sub">Found from payments that repeat with the same amount in 3+ months. Turn any off if it isn't really fixed.</div>
     ${rec.length ? `<table class="mini" style="margin-top:8px"><tr><th>Payee</th><th>Day</th><th class="r">Per month</th><th></th></tr>
       ${rec.map(r => `<tr><td>${E.CAT[r.cat].icon} ${esc(r.name)}<div class="tiny muted">${r.parts.length > 1 || r.perMonth > 1 ? partsLabel(r) + ', ' : ''}${r.months} months</div></td><td class="tiny">${r.parts.map(p => ord(p.day)).filter((v, i, a) => a.indexOf(v) === i).join(', ')}</td><td class="r">${money(r.amount, { stacked: true })}</td>
       <td class="r"><button class="btn small" data-action="unfix" data-k="${esc(r.keys.join(','))}" aria-label="Not fixed">✕</button></td></tr>`).join('')}</table>` : '<div class="sub" style="margin-top:8px">No repeating payments found yet. Tap a transaction and mark it as fixed.</div>'}
   </div>
 
+  ${sipCard(m, false)}
   <div class="card">
     <h2>Safe-to-spend settings</h2>
     <label class="field">Monthly income (₹) <span class="muted">· auto-estimate ${inr(D.incomeAuto)}</span></label>
     <input class="input num" type="number" inputmode="numeric" data-setting="incomeOverride" placeholder="${D.incomeAuto}" value="${S.settings.incomeOverride ?? ''}">
-    <label class="field">Savings goal per month (₹)</label>
+    <label class="field">Extra savings each month, on top of SIPs (₹)</label>
     <input class="input num" type="number" inputmode="numeric" data-setting="savingsGoal" value="${S.settings.savingsGoal}">
     <label class="field">Treat single payments above this as one-offs (₹)</label>
     <input class="input num" type="number" inputmode="numeric" data-setting="oneOff" value="${S.settings.oneOff}">
-    <div class="tiny muted" style="margin-top:10px">Safe to spend = income − fixed costs − savings goal − everyday spending so far. SIPs count as fixed because they leave your account automatically.</div>
+    <div class="tiny muted" style="margin-top:10px">Safe to spend = income − fixed bills − SIPs − extra savings − everyday spending so far.</div>
   </div>`;
 }
 const ord = n => n + (['th', 'st', 'nd', 'rd'][(n % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
@@ -506,10 +560,11 @@ function openSheet(html) { const s = $('#sheet'); s.querySelector('.sheet-body')
 function closeSheet() { $('#sheet').hidden = true; }
 function toast(msg, ms = 2600) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), ms); }
 
+const INCOME_CATS = ['salary', 'interest', 'refund', 'income_other', 'suspense_in', 'bigtransfer_in'];
 function txnSheet(id) {
   const t = S.txns.find(x => x.id === id); if (!t) return;
   const same = S.txns.filter(x => x.payee === t.payee && (x.debit > 0) === (t.debit > 0)).length;
-  const cats = E.CATEGORIES.filter(c => (t.debit > 0 ? !['salary', 'interest', 'refund', 'income_other', 'bigtransfer_in'].includes(c.id) : ['salary', 'interest', 'refund', 'income_other', 'bigtransfer_in', 'transfer'].includes(c.id)));
+  const cats = E.CATEGORIES.filter(c => (t.debit > 0 ? !INCOME_CATS.includes(c.id) : [...INCOME_CATS, 'transfer'].includes(c.id)));
   const isFixedPayee = S.fixedOverrides[t.payee] ?? t.fixed;
   openSheet(`
     <h2>${esc(E.payeeName(t))}</h2>
@@ -522,6 +577,74 @@ function txnSheet(id) {
     <h3>Statement text</h3><div class="raw">${esc([t.type, t.desc, t.ref].filter(Boolean).join(' · '))}</div>
     <div class="btn-row" style="margin-top:14px"><button class="btn primary" data-action="save-txn" data-id="${esc(t.id)}">Save</button><button class="btn" data-action="close-sheet">Cancel</button></div>`);
   S.ui.pickCat = t.cat;
+}
+
+// ---------------- Suspense review ----------------
+let lookupRunning = false, lookupStop = false;
+function suspenseSheet(keepScroll) {
+  const body = $('#sheet .sheet-body'); const top = keepScroll && !$('#sheet').hidden ? body.scrollTop : 0;
+  const all = D.suspense || [];
+  const limit = S.ui.suspenseLimit || 40;
+  const list = all.slice(0, limit);
+  const shops = all.filter(x => x.shop && !S.lookups[x.payee]);
+  const ready = all.filter(x => suggestionFor(x));
+  const spendCats = E.CATEGORIES.filter(c => !INCOME_CATS.includes(c.id) && c.id !== 'suspense');
+  const inCats = E.CATEGORIES.filter(c => [...INCOME_CATS, 'transfer'].includes(c.id) && c.id !== 'suspense_in');
+  openSheet(`
+    <div class="row"><h2>❓ Sort Suspense</h2><button class="btn small" data-action="close-sheet">Done</button></div>
+    <div class="sub">Pick a category once and every payment to or from that payee follows it, including future statements.</div>
+    <div class="card" style="margin:12px 0;padding:12px">
+      <b style="font-size:14px">🔎 Look up shops online</b>
+      <div class="tiny muted" style="margin:4px 0 8px">Sends only the shop names you tick below to OpenStreetMap, one per second. It finds chains and well-mapped places; most small stalls won't be listed. Results are suggestions, nothing changes until you accept.</div>
+      <div class="inline-inputs"><input class="input" id="lookupCity" value="${esc(S.settings.city)}" placeholder="City"><button class="btn primary" data-action="${lookupRunning ? 'lookup-stop' : 'lookup-run'}">${lookupRunning ? 'Stop' : `Look up ${list.filter(x => x.shop && S.ui.lookupPick?.[x.key] !== false && !S.lookups[x.payee]).length} ticked`}</button></div>
+      <div id="lookupProgress" class="tiny muted" style="margin-top:6px">${S.ui.lookupMsg || ''}</div>
+    </div>
+    ${ready.length ? `<button class="btn block" data-action="accept-all">✅ Accept all ${ready.length} suggestions</button>` : ''}
+    <div style="margin-top:8px">${list.map(x => {
+      const sug = suggestionFor(x); const lk = S.lookups[x.payee];
+      const cats = x.dir === 'D' ? spendCats : inCats;
+      const tag = x.family ? '👪 same surname' : x.shop ? '🏪 shop' : x.person ? '👤 person' : '';
+      return `<div class="txn" style="grid-template-columns:1fr auto;cursor:default">
+        <div style="min-width:0"><div class="t1">${esc(x.name)} <span class="tag">${x.dir === 'D' ? 'PAID' : 'RECEIVED'}</span></div>
+          <div class="t2">${x.n}× · ${tag}${x.vpa ? ' · ' + esc(x.vpa) : ''} · last ${dLabel(x.last)}</div>
+          ${sug ? `<div class="tiny" style="margin-top:4px">💡 ${esc(sug.why)} → <b>${E.CAT[sug.cat].icon} ${E.CAT[sug.cat].label}</b> <button class="btn small" data-action="accept-sug" data-k="${esc(x.key)}">Use</button></div>` : lk?.status === 'miss' ? '<div class="tiny muted" style="margin-top:4px">Not found on OpenStreetMap</div>' : ''}
+          <div class="btn-row" style="margin-top:6px;align-items:center">
+            <select class="input" style="width:auto;padding:6px 8px;font-size:13px" data-suspense="${esc(x.key)}"><option value="">Choose category…</option>${cats.map(c => `<option value="${c.id}">${c.icon} ${c.label}</option>`).join('')}</select>
+            <a class="btn small" href="${webSearchUrl(x.name, x.vpa, S.settings.city)}" target="_blank" rel="noopener noreferrer">🌐 Search web</a>
+            ${x.shop && !lk ? `<label class="tiny"><input type="checkbox" data-lookpick="${esc(x.key)}" ${S.ui.lookupPick?.[x.key] === false ? '' : 'checked'}> look up</label>` : ''}
+          </div></div>
+        <div class="amt ${x.dir === 'C' ? 'pos' : ''}"><span class="num">${inr(x.amt)}</span><span class="aud num">${aud(x.amt)}</span></div></div>`;
+    }).join('')}</div>
+    ${all.length > limit ? `<button class="btn block" style="margin-top:10px" data-action="suspense-more">Show ${Math.min(40, all.length - limit)} more (${all.length - limit} left)</button>` : ''}
+    ${!all.length ? '<div class="sub" style="margin-top:12px">🎉 Suspense is empty. Everything has a category.</div>' : ''}`);
+  if (top) $('#sheet .sheet-body').scrollTop = top;
+}
+function suggestionFor(x) {
+  const lk = S.lookups[x.payee];
+  if (lk?.status === 'hit' && x.dir === 'D') return { cat: lk.cat, why: `${lk.place} is a ${lk.kind}${lk.where ? ' in ' + lk.where : ''}` };
+  if (x.family) return { cat: x.dir === 'D' ? 'family' : 'income_other', why: 'Same surname as you' };
+  return null;
+}
+function setPayeeCat(x, cat) {
+  S.rules[x.payee] = { cat, dir: x.dir };
+  S.txns.filter(t => t.payee === x.payee).forEach(t => delete S.txnOverrides[t.id]);
+}
+async function runLookup() {
+  const city = $('#lookupCity')?.value.trim() || S.settings.city; S.settings.city = city;
+  // only payees currently shown on screen, so nothing is sent that the user hasn't seen ticked
+  const items = (D.suspense || []).slice(0, S.ui.suspenseLimit || 40).filter(x => x.shop && S.ui.lookupPick?.[x.key] !== false && !S.lookups[x.payee]).map(x => ({ key: x.payee, name: x.name }));
+  if (!items.length) { toast('Nothing ticked to look up'); return; }
+  lookupRunning = true; lookupStop = false; let done = 0, hits = 0;
+  S.ui.lookupMsg = `Looking up 0 of ${items.length}…`; suspenseSheet(true);
+  await lookupMany(items, city, (key, res) => {
+    S.lookups[key] = res; done++; if (res.status === 'hit') hits++;
+    S.ui.lookupMsg = `Looked up ${done} of ${items.length} · ${hits} found`;
+    const pg = $('#lookupProgress'); if (pg) pg.textContent = S.ui.lookupMsg;
+    if (done % 5 === 0) save();
+  }, () => lookupStop);
+  lookupRunning = false;
+  S.ui.lookupMsg = `Done: ${hits} of ${done} found on OpenStreetMap.${done < items.length ? ' Stopped early.' : ''}`;
+  derive(); save(); if (!$('#sheet').hidden) suspenseSheet(true); render();
 }
 
 function settingsSheet() {
@@ -545,7 +668,7 @@ function settingsSheet() {
     <div class="btn-row" style="margin-top:8px"><button class="btn" data-action="export">⬇️ Export backup</button><button class="btn" data-action="import-json">⬆️ Restore backup</button></div>
     <div class="btn-row" style="margin-top:8px"><button class="btn danger" data-action="clear-data">🗑️ Delete all data</button><button class="btn" data-action="load-demo">Load demo data</button>${window.RUPEEROO_SEED ? '<button class="btn" data-action="reload-seed">Reload my statements</button>' : ''}</div>
     <div class="btn-row" style="margin-top:16px"><button class="btn primary" data-action="save-settings">Done</button></div>
-    <div class="tiny muted" style="margin-top:14px">RupeeRoo reads PDFs with Mozilla pdf.js on your device. The page is only allowed to contact the exchange-rate services (Coinbase, frankfurter.dev, open.er-api.com).</div>`);
+    <div class="tiny muted" style="margin-top:14px">RupeeRoo reads PDFs with Mozilla pdf.js on your device. The page is only allowed to contact the exchange-rate services (Coinbase, frankfurter.dev, open.er-api.com) and, when you ask it to look up shops, OpenStreetMap.</div>`);
 }
 function checkList(c) {
   const out = [`<li>${c.count} transactions (${c.drCount} debits, ${c.crCount} credits)</li>`];
@@ -667,6 +790,12 @@ document.addEventListener('click', async e => {
     case 'close-sheet': closeSheet(); break;
     case 'open-settings': settingsSheet(); break;
     case 'chips-scroll': { const row = el.parentElement.querySelector('.chips'); row.scrollBy({ left: +el.dataset.dir * row.clientWidth * 0.7, behavior: 'smooth' }); break; }
+    case 'open-suspense': S.ui.suspenseLimit = 40; suspenseSheet(); break;
+    case 'suspense-more': S.ui.suspenseLimit = (S.ui.suspenseLimit || 40) + 40; suspenseSheet(true); break;
+    case 'lookup-run': runLookup(); break;
+    case 'lookup-stop': lookupStop = true; break;
+    case 'accept-sug': { const x = D.suspense.find(y => y.key === el.dataset.k); const sg = x && suggestionFor(x); if (sg) { setPayeeCat(x, sg.cat); derive(); save(); suspenseSheet(true); render(); toast(`${x.name} → ${E.CAT[sg.cat].label}`); } break; }
+    case 'accept-all': { let n = 0; for (const x of D.suspense) { const sg = suggestionFor(x); if (sg) { setPayeeCat(x, sg.cat); n++; } } derive(); save(); suspenseSheet(true); render(); toast(`Sorted ${n} payees`); break; }
     case 'month': S.ui.month = el.dataset.m; save(); render(); break;
     case 'cat': S.ui.catFilter = el.dataset.c || null; save(); render(); document.querySelector('.search')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); break;
     case 'txn': txnSheet(el.dataset.id); break;
@@ -707,6 +836,9 @@ document.addEventListener('click', async e => {
 });
 document.addEventListener('change', e => {
   const el = e.target;
+  if (el.dataset.suspense && el.value) { const x = D.suspense.find(y => y.key === el.dataset.suspense); if (x) { setPayeeCat(x, el.value); derive(); save(); suspenseSheet(true); render(); toast(`${x.name} → ${E.CAT[el.value].label}`); } return; }
+  if (el.dataset.lookpick) { (S.ui.lookupPick ??= {})[el.dataset.lookpick] = el.checked; save(); const b = document.querySelector('[data-action="lookup-run"]'); if (b) b.textContent = `Look up ${D.suspense.slice(0, S.ui.suspenseLimit || 40).filter(x => x.shop && S.ui.lookupPick?.[x.key] !== false && !S.lookups[x.payee]).length} ticked`; return; }
+  if (el.id === 'lookupCity') { S.settings.city = el.value.trim(); save(); return; }
   if (el.dataset.setting) { const v = el.value === '' ? null : +el.value; S.settings[el.dataset.setting] = el.dataset.setting === 'incomeOverride' ? v : (v ?? 0); derive(); save(); render(); }
   else if (el.dataset.sy) { S.sydney[el.dataset.sy] = el.type === 'number' ? +el.value : el.value; save(); render(); }
   else if (el.dataset.loan) { S.sydney.loan[el.dataset.loan] = el.type === 'checkbox' ? el.checked : +el.value; save(); render(); }
