@@ -1,10 +1,10 @@
-import { extractPages, parseStatement, detectBank, counterparty } from './parser.js';
-import * as E from './engine.js';
-import { fetchRatesLive, fxStats } from './fx.js';
-import { makeDemo } from './demo.js';
-import { lookupMany, webSearchUrl } from './lookup.js';
-import * as V from './visa.js';
-import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js';
+import { extractPages, parseStatement, detectBank, counterparty } from './parser.js?v=20261113c';
+import * as E from './engine.js?v=20261113c';
+import { fetchRatesLive, fxStats } from './fx.js?v=20261113c';
+import { makeDemo } from './demo.js?v=20261113c';
+import { lookupMany, webSearchUrl } from './lookup.js?v=20261113c';
+import * as V from './visa.js?v=20261113c';
+import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261113c';
 
 const VISA_LIVING_AUD = 29710; // Home Affairs 12-month living cost for a primary student (checked Nov 2026)
 const WORK_LIMIT = 48;         // hours per fortnight while the course is in session (condition 8105)
@@ -864,8 +864,8 @@ function checkList(c) {
 let pdfjs;
 async function getPdfjs() {
   if (pdfjs) return pdfjs;
-  pdfjs = await import('../vendor/pdf.min.js');
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js', import.meta.url).href;
+  pdfjs = await import('../vendor/pdf.min.js?v=20261113c');
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261113c', import.meta.url).href;
   return pdfjs;
 }
 function askPassword(name, wrong) {
@@ -900,10 +900,12 @@ async function importFiles(files) {
     const r = parseStatement(pages, bank);
     if (!r.txns.length) { results.push(`${f.name}: found no transactions. The layout may have changed.`); continue; }
     const existing = new Set(S.txns.map(t => t.id));
+    // second safety net: same bank, date, amounts and running balance = same row, even if the account number wasn't read
+    const seenRow = new Set(S.txns.map(t => [t.bank, t.date, t.debit, t.credit, t.balance].join('|')));
     let dupes = 0;
     for (const t of r.txns) {
       const id = [bank, r.acct, t.date, t.debit, t.credit, t.balance].join('|');
-      if (existing.has(id)) { dupes++; continue; }
+      if (existing.has(id) || seenRow.has([bank, t.date, t.debit, t.credit, t.balance].join('|'))) { dupes++; continue; }
       existing.add(id);
       S.txns.push({ id, bank, acct: r.acct, date: t.date, type: t.type, desc: t.desc, ref: t.ref, debit: t.debit, credit: t.credit, balance: t.balance, seq: t.seq });
     }
