@@ -1,10 +1,10 @@
-import { extractPages, parseStatement, detectBank, counterparty } from './parser.js?v=20261113e';
-import * as E from './engine.js?v=20261113e';
-import { fetchRatesLive, fxStats } from './fx.js?v=20261113e';
-import { makeDemo } from './demo.js?v=20261113e';
-import { lookupMany, webSearchUrl } from './lookup.js?v=20261113e';
-import * as V from './visa.js?v=20261113e';
-import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261113e';
+import { extractPages, parseStatement, detectBank, counterparty, SUPPORTED_BANKS } from './parser.js?v=20261113f';
+import * as E from './engine.js?v=20261113f';
+import { fetchRatesLive, fxStats } from './fx.js?v=20261113f';
+import { makeDemo } from './demo.js?v=20261113f';
+import { lookupMany, webSearchUrl } from './lookup.js?v=20261113f';
+import * as V from './visa.js?v=20261113f';
+import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261113f';
 
 const VISA_LIVING_AUD = 29710; // Home Affairs 12-month living cost for a primary student (checked Nov 2026)
 const WORK_LIMIT = 48;         // hours per fortnight while the course is in session (condition 8105)
@@ -180,14 +180,14 @@ function viewEmpty() {
     <div class="drop" id="drop" data-action="pick-pdf">
       <div class="big"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg></div>
       <div style="font-weight:650;font-size:16px;margin-top:6px">Add your bank statements</div>
-      <div class="sub" style="margin-top:4px">PDF statements from <b>SBI</b> or <b>IndusInd</b>. Pick several at once.</div>
+      <div class="sub" style="margin-top:4px">PDF statements from <b>SBI, HDFC, ICICI, Axis, Kotak, IDBI, IndusInd, PNB, Bank of Baroda, Canara, Union</b> and most other banks. Pick several at once.</div>
       <button class="btn primary" style="margin-top:14px" data-action="pick-pdf">Choose PDF files</button>
     </div>
     <div class="privacy"><span>Statements are read <b>on this device</b> and saved only in this browser. Nothing is uploaded. The only network call is for exchange rates.</span></div>
     <button class="btn block" style="margin-top:12px" data-action="load-demo">Try it with demo data</button>
   </div>
   ${S.statements.length ? '' : `<div class="card"><h2>How it works</h2><ol class="sub" style="padding-left:18px;margin:0">
-    <li>Download a PDF statement from YONO / net banking (SBI) or the INDIE app (IndusInd).</li>
+    <li>Download a PDF account statement from your bank's app or net banking (not a scanned photo).</li>
     <li>Add it here. Every row is checked against the running balance.</li>
     <li>Fix any category once; RupeeRoo remembers it for that payee.</li></ol></div>`}`;
 }
@@ -373,20 +373,85 @@ function viewSpend() {
       <div class="track"><div class="fill" style="width:${(v / max * 100).toFixed(1)}%"></div></div></div></div>`).join('') || '<div class="sub">No spending this month.</div>'}
   </div>
   <div class="card">
-    <h2>Transactions <small>${list.length}</small></h2>
+    <div class="row"><h2>Transactions <small>${list.length}</small></h2><button class="btn small" data-action="${selTx ? 'sel-done' : 'sel-start'}">${selTx ? 'Done' : 'Select'}</button></div>
     <input class="search" type="search" placeholder="Search payee or note" value="${esc(S.ui.q)}" data-input="q">
     ${filter ? `<div style="margin-top:8px"><button class="chip on" data-action="cat" data-c="">${E.CAT[filter].icon} ${E.CAT[filter].label} ✕</button></div>` : ''}
+    ${selTx ? `<div class="btn-row" style="margin-top:8px;align-items:center"><button class="btn small" data-action="sel-all">${list.slice(0, 250).every(t => selTx.has(t.id)) && list.length ? 'Clear all' : `Select all ${Math.min(list.length, 250)} shown`}</button><span class="tiny muted">Tap rows to tick them, then pick a category.</span></div>` : ''}
     <div style="margin-top:6px">${list.slice(0, 250).map(txnRow).join('')}</div>
     ${list.length > 250 ? `<div class="tiny muted">Showing the first 250. Search to narrow down.</div>` : ''}
-  </div>`;
+  </div>
+  ${selTx?.size ? bulkBar(selTx.size, 'bulk-tx') : ''}`;
 }
 function txnRow(t) {
   const c = E.CAT[t.cat]; const amt = t.credit ? t.credit : -t.debit;
   const sign = amt > 0 ? 'pos' : '';
-  return `<div class="txn" data-action="txn" data-id="${esc(t.id)}"><div class="ic">${c.icon}</div>
+  const on = selTx?.has(t.id);
+  return `<div class="txn${selTx ? ' selmode' : ''}${on ? ' picked' : ''}" data-action="${selTx ? 'sel-txn' : 'txn'}" data-id="${esc(t.id)}" ${selTx ? `role="checkbox" aria-checked="${on ? 'true' : 'false'}"` : ''}>${selTx ? `<div class="chk" aria-hidden="true">${on ? '✓' : ''}</div>` : ''}<div class="ic">${c.icon}</div>
     <div style="min-width:0"><div class="t1">${esc(E.payeeName(t))}${t.fixed ? '<span class="tag">FIXED</span>' : ''}</div><div class="t2">${dLabel(t.date)} · ${c.label} · ${t.bank}</div>${S.notes[t.id] ? `<div class="t2" style="color:var(--text-secondary)">📝 ${esc(S.notes[t.id])}</div>` : ''}</div>
     <div class="amt ${sign}"><span class="num">${amt > 0 ? '+' : '−'}${inr(Math.abs(amt), Math.abs(amt) % 1 ? 2 : 0).replace('−', '')}</span><span class="aud num">${aud(Math.abs(amt))}</span></div></div>`;
 }
+// ---------------- multi-select ----------------
+let selTx = null;             // Set of transaction ids while "Select" is on in Spending
+let selPayees = new Set();    // Suspense payee keys ticked in Sort Suspense
+function bulkBar(n, action) {
+  return `<div class="bulkbar"><span><b>${n}</b> selected</span><button class="btn primary small" data-action="${action}">Choose category</button></div>`;
+}
+/** One sheet for many items: note box + suggestions + the full category grid, like a single transaction. */
+function bulkSheet(mode) {
+  const items = mode === 'payees'
+    ? (D.suspense || []).filter(x => selPayees.has(x.key))
+    : S.txns.filter(t => selTx?.has(t.id));
+  if (!items.length) { toast('Nothing selected'); return; }
+  const isOut = x => (mode === 'payees' ? x.dir === 'D' : x.debit > 0);
+  const nOut = items.filter(isOut).length, nIn = items.length - nOut;
+  const total = mode === 'payees' ? items.reduce((s, x) => s + x.amt, 0) : items.reduce((s, t) => s + (t.debit || t.credit), 0);
+  const spendCats = E.CATEGORIES.filter(c => !INCOME_CATS.includes(c.id));
+  const inCats = E.CATEGORIES.filter(c => [...INCOME_CATS, 'transfer'].includes(c.id));
+  S.ui.bulk = { mode, out: null, in: null };
+  const grid = (cats, side) => `<div class="catgrid" data-side="${side}">${cats.map(c => `<button data-action="bulk-pick" data-side="${side}" data-c="${c.id}"><span>${c.icon}</span>${c.label}</button>`).join('')}</div>`;
+  openSheet(`
+    <h2>${items.length} ${mode === 'payees' ? 'payees' : 'transactions'}</h2>
+    <div class="sub">${nOut ? `${nOut} paid out` : ''}${nOut && nIn ? ' · ' : ''}${nIn ? `${nIn} received` : ''} · ${inr(total)} in all</div>
+    <h3>What were these?</h3>
+    <textarea class="input" id="bulkNote" rows="2" placeholder="Optional, e.g. Goa trip with friends" data-input="bulkNote"></textarea>
+    <div id="bulkSug" class="stack" style="margin-top:8px"></div>
+    ${nOut ? `<h3>${nIn ? `Category for the ${nOut} paid out` : 'Category'}</h3>${grid(spendCats, 'out')}` : ''}
+    ${nIn ? `<h3>${nOut ? `Category for the ${nIn} received` : 'Category'}</h3>${grid(inCats, 'in')}` : ''}
+    ${mode === 'payees' ? '<div class="tiny muted">Every payment to or from these payees follows this, including future statements.</div>'
+      : `<label class="switch"><span>Also apply to every past and future payment to these payees</span><input type="checkbox" id="bulkAll"></label>`}
+    <div class="btn-row" style="margin-top:14px"><button class="btn primary" data-action="bulk-apply">Apply</button><button class="btn" data-action="${mode === 'payees' ? 'bulk-back' : 'close-sheet'}">Cancel</button></div>`);
+}
+function bulkSuggest(note) {
+  const box = $('#bulkSug'); if (!box) return;
+  const opts = note ? localSuggest(note, $('[data-side="out"]') ? 'D' : 'C', E.CATEGORIES.map(c => c.id)) : [];
+  box.innerHTML = opts.length ? `<div class="tiny muted">From your note:</div><div class="btn-row">${opts.map(o => `<button class="chip" data-action="bulk-sug" data-c="${o.cat}">${E.CAT[o.cat].icon} ${E.CAT[o.cat].label}</button>`).join('')}</div>` : '';
+}
+function bulkApply() {
+  const b = S.ui.bulk; if (!b) return;
+  if (!b.out && !b.in) { toast('Pick a category first'); return; }
+  const note = $('#bulkNote')?.value.trim();
+  let n = 0;
+  if (b.mode === 'payees') {
+    for (const x of (D.suspense || []).filter(y => selPayees.has(y.key))) {
+      const cat = x.dir === 'D' ? b.out : b.in; if (!cat) continue;
+      setPayeeCat(x, cat); n++;
+      if (note) S.txns.filter(t => t.payee === x.payee && !S.notes[t.id]).forEach(t => (S.notes[t.id] = note));
+    }
+    selPayees = new Set();
+    derive(); save(); suspenseSheet(true); render(); toast(`Sorted ${n} payees`); return;
+  }
+  const all = $('#bulkAll')?.checked;
+  for (const t of S.txns.filter(x => selTx?.has(x.id))) {
+    const cat = t.debit > 0 ? b.out : b.in; if (!cat) continue;
+    if (all) { S.rules[t.payee] = { cat, dir: t.debit > 0 ? 'D' : 'C' }; S.txns.filter(x => x.payee === t.payee).forEach(x => delete S.txnOverrides[x.id]); }
+    else S.txnOverrides[t.id] = cat;
+    if (note) S.notes[t.id] = note;
+    n++;
+  }
+  selTx = null;
+  derive(); save(); closeSheet(); render(); toast(`Updated ${n} transactions`);
+}
+
 function tableView(head, rows) {
   return `<details class="table-view"><summary>Show as table</summary><table class="mini"><tr>${head.map((h, i) => `<th class="${i ? 'r' : ''}">${h}</th>`).join('')}</tr>${rows.map(r => `<tr>${r.map((c, i) => `<td class="${i ? 'r' : ''}">${c}</td>`).join('')}</tr>`).join('')}</table></details>`;
 }
@@ -803,11 +868,13 @@ function suspenseSheet(keepScroll) {
       <div id="lookupProgress" class="tiny muted" style="margin-top:6px">${S.ui.lookupMsg || ''}</div>
     </div>
     ${ready.length ? `<button class="btn block" data-action="accept-all">Accept all ${ready.length} suggestions</button>` : ''}
+    ${list.length ? `<div class="btn-row" style="margin-top:8px;align-items:center"><button class="btn small" data-action="sus-all">${list.every(x => selPayees.has(x.key)) ? 'Clear ticks' : `Tick all ${list.length} shown`}</button><span class="tiny muted">Tick several payees to sort them in one go.</span></div>` : ''}
     <div style="margin-top:8px">${list.map(x => {
       const sug = suggestionFor(x); const lk = S.lookups[x.payee];
       const cats = x.dir === 'D' ? spendCats : inCats;
       const tag = x.family ? 'same surname' : x.shop ? 'shop' : x.person ? 'person' : '';
-      return `<div class="txn" style="grid-template-columns:1fr auto;cursor:default">
+      return `<div class="txn" style="grid-template-columns:auto 1fr auto;cursor:default">
+        <label class="tickbox" title="Select ${esc(x.name)}"><input type="checkbox" data-sussel="${esc(x.key)}" ${selPayees.has(x.key) ? 'checked' : ''} aria-label="Select ${esc(x.name)}"></label>
         <div style="min-width:0"><div class="t1" data-action="txn" data-id="${esc(x.sample.id)}" style="cursor:pointer;text-decoration:underline dotted">${esc(x.name)} <span class="tag">${x.dir === 'D' ? 'PAID' : 'RECEIVED'}</span></div>
           <div class="t2">${x.n}× · ${tag}${x.vpa ? ' · ' + esc(x.vpa) : ''} · last ${dLabel(x.last)}</div>
           ${sug ? `<div class="tiny" style="margin-top:4px">Suggestion: ${esc(sug.why)} → <b>${E.CAT[sug.cat].icon} ${E.CAT[sug.cat].label}</b> <button class="btn small" data-action="accept-sug" data-k="${esc(x.key)}">Use</button></div>` : lk?.status === 'miss' ? '<div class="tiny muted" style="margin-top:4px">Not found on OpenStreetMap</div>' : ''}
@@ -819,8 +886,13 @@ function suspenseSheet(keepScroll) {
         <div class="amt ${x.dir === 'C' ? 'pos' : ''}"><span class="num">${inr(x.amt)}</span><span class="aud num">${aud(x.amt)}</span></div></div>`;
     }).join('')}</div>
     ${all.length > limit ? `<button class="btn block" style="margin-top:10px" data-action="suspense-more">Show ${Math.min(40, all.length - limit)} more (${all.length - limit} left)</button>` : ''}
-    ${!all.length ? '<div class="sub" style="margin-top:12px">Suspense is empty. Everything has a category.</div>' : ''}`);
+    ${!all.length ? '<div class="sub" style="margin-top:12px">Suspense is empty. Everything has a category.</div>' : ''}
+    <div id="susBar" class="sus-sticky">${susBarHTML()}</div>`);
   if (top) $('#sheet .sheet-body').scrollTop = top;
+}
+function susBarHTML() {
+  const n = [...selPayees].filter(k => (D.suspense || []).some(x => x.key === k)).length;
+  return n ? `<div class="bulkbar in-sheet"><span><b>${n}</b> payee${n > 1 ? 's' : ''} ticked</span><button class="btn primary small" data-action="bulk-payees">Choose category</button></div>` : '';
 }
 function suggestionFor(x) {
   const lk = S.lookups[x.payee];
@@ -891,13 +963,13 @@ function checkList(c) {
 let pdfjs;
 async function getPdfjs() {
   if (pdfjs) return pdfjs;
-  pdfjs = await import('../vendor/pdf.min.js?v=20261113e');
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261113e', import.meta.url).href;
+  pdfjs = await import('../vendor/pdf.min.js?v=20261113f');
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261113f', import.meta.url).href;
   return pdfjs;
 }
 function askPassword(name, wrong) {
   return new Promise(res => {
-    openSheet(`<h2>${esc(name)} is password protected</h2><div class="sub">${wrong ? '<b class="bad">That password didn’t work.</b> ' : ''}SBI usually uses the last 5 digits of your mobile number + your date of birth (DDMMYY). The password stays on this device.</div>
+    openSheet(`<h2>${esc(name)} is password protected</h2><div class="sub">${wrong ? '<b class="bad">That password didn’t work.</b> ' : ''}Banks usually build it from your details: SBI uses the last 5 digits of your mobile + date of birth (DDMMYY); many others use your customer ID, or the first letters of your name + date of birth. The email the statement came with says which. The password stays on this device.</div>
       <input class="input" type="password" id="pdfPw" autocomplete="off" style="margin-top:10px"><div class="btn-row" style="margin-top:10px"><button class="btn primary" id="pwOk">Open</button><button class="btn" id="pwCancel">Skip file</button></div>`);
     $('#pwOk').onclick = () => { const v = $('#pdfPw').value; closeSheet(); res(v); };
     $('#pwCancel').onclick = () => { closeSheet(); res(null); };
@@ -922,10 +994,10 @@ async function importFiles(files) {
       }
     }
     if (!pages) continue;
+    if (!pages.some(p => p.items.length > 5)) { results.push(`${f.name}: this looks like a scanned image, so there's no text to read. Download the statement from net banking instead.`); continue; }
     const bank = detectBank(pages);
-    if (!bank) { results.push(`${f.name}: not an SBI or IndusInd statement, or it's a scanned image.`); continue; }
     const r = parseStatement(pages, bank);
-    if (!r.txns.length) { results.push(`${f.name}: found no transactions. The layout may have changed.`); continue; }
+    if (!r.txns.length) { results.push(`${f.name}: couldn't find a transaction table with dates and a balance column. If it's a bank statement, send me the layout and I'll add it.`); continue; }
     const existing = new Set(S.txns.map(t => t.id));
     // second safety net: same bank, date, amounts and running balance = same row, even if the account number wasn't read
     const seenRow = new Set(S.txns.map(t => [t.bank, t.date, t.debit, t.credit, t.balance].join('|')));
@@ -939,7 +1011,7 @@ async function importFiles(files) {
     if (r.holder && !S.settings.holderNames.some(n => n.toUpperCase() === r.holder.toUpperCase())) S.settings.holderNames.push(r.holder);
     r.checks.dupes = dupes;
     S.statements.push({ bank, acct: r.acct, from: r.checks.from, to: r.checks.to, checks: r.checks, importedAt: today() });
-    results.push(`${bank}${r.acct ? ' ••' + r.acct : ''}: ${r.txns.length - dupes} new rows${r.checks.balanceBreaks ? `, ${r.checks.balanceBreaks} balance mismatches` : ', all balances check out'}${r.checks.summaryMatch ? ', matches bank totals' : ''}.`);
+    results.push(`${bank}${r.acct ? ' ••' + r.acct : ''}: ${r.txns.length - dupes} new rows${r.checks.balanceBreaks ? `, ${r.checks.balanceBreaks} rows don't match the running balance, so check those` : ', all balances check out'}${r.checks.summaryMatch ? ', matches bank totals' : ''}.`);
   }
   $('#toast').hidden = true;
   S.ui.month = null;
@@ -989,7 +1061,7 @@ function checkFxAlerts() {
 // ---------------- events ----------------
 document.addEventListener('click', async e => {
   const tab = e.target.closest('[data-tab]');
-  if (tab) { S.ui.tab = tab.dataset.tab; save(); render(); scrollTo(0, 0); return; }
+  if (tab) { S.ui.tab = tab.dataset.tab; selTx = null; save(); render(); scrollTo(0, 0); return; }
   const el = e.target.closest('[data-action]'); if (!el) return;
   const a = el.dataset.action;
   switch (a) {
@@ -1011,6 +1083,17 @@ document.addEventListener('click', async e => {
     case 'month': S.ui.month = el.dataset.m; save(); render(); break;
     case 'cat': S.ui.catFilter = el.dataset.c || null; save(); render(); document.querySelector('.search')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); break;
     case 'txn': txnSheet(el.dataset.id); break;
+    case 'sel-start': selTx = new Set(); render(); break;
+    case 'sel-done': selTx = null; render(); break;
+    case 'sel-txn': { const id = el.dataset.id; selTx.has(id) ? selTx.delete(id) : selTx.add(id); const y = window.scrollY; render(); window.scrollTo(0, y); break; }
+    case 'sel-all': { const shown = [...document.querySelectorAll('[data-action="sel-txn"]')].map(r => r.dataset.id); const allOn = shown.every(id => selTx.has(id)); shown.forEach(id => (allOn ? selTx.delete(id) : selTx.add(id))); const y = window.scrollY; render(); window.scrollTo(0, y); break; }
+    case 'bulk-tx': bulkSheet('tx'); break;
+    case 'bulk-payees': bulkSheet('payees'); break;
+    case 'bulk-back': suspenseSheet(); break;
+    case 'bulk-pick': { const side = el.dataset.side; S.ui.bulk[side] = el.dataset.c; el.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === el)); break; }
+    case 'bulk-sug': { const c = el.dataset.c, side = INCOME_CATS.includes(c) || c === 'transfer' ? 'in' : 'out'; const btn = document.querySelector(`.catgrid[data-side="${side}"] button[data-c="${c}"]`); if (btn) btn.click(); else toast('That category doesn\'t fit these'); break; }
+    case 'bulk-apply': bulkApply(); break;
+    case 'sus-all': { const shown = (D.suspense || []).slice(0, S.ui.suspenseLimit || 40).map(x => x.key); const allOn = shown.every(k => selPayees.has(k)); shown.forEach(k => (allOn ? selPayees.delete(k) : selPayees.add(k))); suspenseSheet(true); break; }
     case 'pick-cat': S.ui.pickCat = el.dataset.c; el.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === el)); break;
     case 'save-txn': {
       const t = S.txns.find(x => x.id === el.dataset.id);
@@ -1066,6 +1149,7 @@ document.addEventListener('click', async e => {
 });
 document.addEventListener('change', e => {
   const el = e.target;
+  if (el.dataset.sussel) { el.checked ? selPayees.add(el.dataset.sussel) : selPayees.delete(el.dataset.sussel); $('#susBar').innerHTML = susBarHTML(); return; }
   if (el.dataset.suspense && el.value) { const x = D.suspense.find(y => y.key === el.dataset.suspense); if (x) { setPayeeCat(x, el.value); derive(); save(); suspenseSheet(true); render(); toast(`${x.name} → ${E.CAT[el.value].label}`); } return; }
   if (el.dataset.lookpick) { (S.ui.lookupPick ??= {})[el.dataset.lookpick] = el.checked; save(); const b = document.querySelector('[data-action="lookup-run"]'); if (b) b.textContent = `Look up ${D.suspense.slice(0, S.ui.suspenseLimit || 40).filter(x => x.shop && S.ui.lookupPick?.[x.key] !== false && !S.lookups[x.payee]).length} ticked`; return; }
   if (el.id === 'lookupCity') { S.settings.city = el.value.trim(); save(); return; }
@@ -1080,6 +1164,7 @@ document.addEventListener('change', e => {
 });
 document.addEventListener('input', e => {
   const el = e.target;
+  if (el.dataset.input === 'bulkNote') { bulkSuggest(el.value.trim()); return; }
   if (el.dataset.input === 'txnNote') { const t = S.txns.find(x => x.id === el.dataset.id); if (t) { const cats = E.CATEGORIES.filter(c => (t.debit > 0 ? !INCOME_CATS.includes(c.id) : [...INCOME_CATS, 'transfer'].includes(c.id))); $('#sugBox').innerHTML = suggestionsHTML(t, cats, el.value); } return; }
   if (el.dataset.input === 'q') { S.ui.q = el.value; const pos = el.selectionStart; render(); const s = document.querySelector('.search'); s.focus(); s.setSelectionRange(pos, pos); }
   if (el.dataset.conv) {
