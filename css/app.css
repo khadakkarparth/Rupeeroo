@@ -287,3 +287,31 @@ details.explain[open] summary::after { content: ' ⌄'; }
   background: var(--card); border: 1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,.16); font-size: 14px; }
 .sus-sticky { position: sticky; bottom: 0; z-index: 2; }
 .bulkbar.in-sheet { position: static; transform: none; width: auto; margin-top: 12px; }
+
+/* simple home: four numbers */
+button.brand { background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: 650; font-size: 17px; cursor: pointer; display: flex; gap: 8px; align-items: center; }
+.stats4 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+.stats4 .stat { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 14px 14px 13px; min-width: 0; }
+.stats4 .k { font-size: 12.5px; color: var(--muted); }
+.stats4 .v { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; margin-top: 6px; overflow-wrap: anywhere; }
+.stats4 .v.neg { color: var(--bad-text); }
+.stats4 .s { font-size: 11.5px; color: var(--muted); margin-top: 4px; line-height: 1.35; }
+.stats4 .stat-key { background: var(--accent); border-color: var(--accent); }
+.stats4 .stat-key .k, .stats4 .stat-key .s { color: color-mix(in srgb, var(--accent-ink) 70%, transparent); }
+.stats4 .stat-key .v { color: var(--accent-ink); }
+.home-explain { margin: 0 2px 12px; }
+.home-explain td.r { text-align: left; color: var(--muted); }
+@media (min-width: 760px) { .stats4 { grid-template-columns: repeat(4, 1fr); } .stats4 .v { font-size: 26px; } }
+.stats4 .stat-key .v.neg { color: #ff8f8f; }
+.home-explain td:first-child { white-space: nowrap; vertical-align: top; padding-right: 10px; }
+.stats4 button.stat { text-align: left; font: inherit; color: inherit; cursor: pointer; display: block; width: 100%; }
+.stats4 button.stat:active { transform: scale(.985); }
+.stats4 .k { display: flex; justify-content: space-between; }
+.stats4 .k .chev { opacity: .55; }
+.detail-total { font-size: 28px; font-weight: 650; letter-spacing: -0.02em; margin: 2px 0 2px; }
+.acct-block { border-top: 1px solid var(--border); padding: 10px 0; }
+.acct-block > summary { display: flex; justify-content: space-between; gap: 10px; cursor: pointer; list-style: none; }
+.acct-block > summary::-webkit-details-marker { display: none; }
+
+.stats4 .stat-key { grid-column: 1 / -1; }
+@media (min-width: 760px) { .stats4 { grid-template-columns: repeat(5, 1fr); } .stats4 .stat-key { grid-column: auto; } }
