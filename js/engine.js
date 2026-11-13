@@ -1,6 +1,6 @@
 // Money logic: categories, own-account transfers, recurring (fixed) costs,
 // variable-spend forecast, safe-to-spend and the game layer. No network, no DOM.
-import { counterparty } from './parser.js?v=20261113f';
+import { counterparty } from './parser.js?v=20261113i';
 
 export const CATEGORIES = [
   // id, label, icon, kind: spend | income | transfer | invest | excluded

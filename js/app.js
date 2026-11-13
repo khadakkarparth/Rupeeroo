@@ -1,10 +1,10 @@
-import { extractPages, parseStatement, detectBank, counterparty, SUPPORTED_BANKS } from './parser.js?v=20261113f';
-import * as E from './engine.js?v=20261113f';
-import { fetchRatesLive, fxStats } from './fx.js?v=20261113f';
-import { makeDemo } from './demo.js?v=20261113f';
-import { lookupMany, webSearchUrl } from './lookup.js?v=20261113f';
-import * as V from './visa.js?v=20261113f';
-import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261113f';
+import { extractPages, parseStatement, detectBank, counterparty, SUPPORTED_BANKS } from './parser.js?v=20261113i';
+import * as E from './engine.js?v=20261113i';
+import { fetchRatesLive, fxStats } from './fx.js?v=20261113i';
+import { makeDemo } from './demo.js?v=20261113i';
+import { lookupMany, webSearchUrl } from './lookup.js?v=20261113i';
+import * as V from './visa.js?v=20261113i';
+import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261113i';
 
 const VISA_LIVING_AUD = 29710; // Home Affairs 12-month living cost for a primary student (checked Nov 2026)
 const WORK_LIMIT = 48;         // hours per fortnight while the course is in session (condition 8105)
@@ -216,42 +216,115 @@ function syncChipNav(row) {
 
 function viewHome() {
   const m = S.ui.month, c = monthCtx(m), mo = c.mo;
-  const remaining = c.sts.remaining;
-  const first = S.settings.primary === 'AUD' && rate() ? aud(remaining) : inr(remaining);
-  const second = S.settings.primary === 'AUD' && rate() ? inr(remaining) : aud(remaining);
-  const paceText = { good: 'On track', warning: 'A little ahead of pace', serious: 'Spending fast', critical: c.hp.hp <= 10 ? 'Almost used up' : 'Well over pace' }[c.hp.status];
-  const used = c.sts.monthlyAllowance > 0 ? Math.min(100, c.spentVar / c.sts.monthlyAllowance * 100) : 100;
+  const big = n => fmtPlain(n);
+  // 1. came in (own-account transfers already left out)
+  const cameIn = mo.income;
+  // 2. left: latest running balance of every account on or before the month's end
+  const left = balancesAt(m);
+  const dates = [...new Set(left.accts.map(x => x.date))];
+  const leftSub = !left.accts.length ? 'No balance yet'
+    : dates.length === 1 ? `as of ${dLabel(dates[0])}${left.accts.length > 1 ? ` · ${left.accts.length} accounts` : ''}`
+    : left.accts.map(x => `${x.bank}${x.acct ? ' ••' + x.acct : ''} ${dLabel(x.date)}`).join(' · ');
+  // 3. SIPs on their own, 4. kept = came in − spent − SIPs (money that stayed in the account)
+  const sipAmt = mo.invest;
+  const sm0 = D.sip.months[m];
+  const sipSub = sm0?.missed ? `${inr(sm0.missed)} bounced` : sipAmt > 0 ? 'into SIPs & investments' : 'none this month';
+  const kept = mo.income - mo.spend - mo.invest;
+  const keptSub = kept >= 0 ? 'not spent, still in the bank' : 'spent more than came in';
+  // 4. can spend
+  const can = c.sts.remaining;
+  const canSub = c.monthOver ? (can < 0 ? `over budget in ${mLabel(m)}` : `left unspent in ${mLabel(m)}`)
+    : can < 0 ? `over budget · ${c.dim - c.day} days left` : `${c.dim - c.day} days left${c.sts.perDay > 0 ? ` · ${fmtPlain(c.sts.perDay)} a day` : ''}`;
   const sm = D.sip.months[m];
-  const attention = [];
-  if (sm?.missed) attention.push(`<button class="note-row" data-tab="plan"><span class="dot dot-bad"></span><span><b>${inr(sm.missed)} of SIPs bounced</b><span class="muted"> · ${sm.charges ? inr(sm.charges, 0) + ' in bank charges' : 'check your balance before the due date'}</span></span><span class="chev">›</span></button>`);
+  const notes = [];
+  if (sm?.missed) notes.push(`<button class="note-row" data-tab="plan"><span class="dot dot-bad"></span><span><b>${inr(sm.missed)} of SIPs bounced</b></span><span class="chev">›</span></button>`);
   const sus = (D.suspense || []).filter(x => x.dir === 'D');
-  if (sus.length) attention.push(`<button class="note-row" data-action="open-suspense"><span class="dot dot-warn"></span><span><b>${sus.length} payees to sort</b><span class="muted"> · ${inr(sus.reduce((x, y) => x + y.amt, 0))} uncategorised</span></span><span class="chev">›</span></button>`);
+  if (sus.length) notes.push(`<button class="note-row" data-action="open-suspense"><span class="dot dot-warn"></span><span><b>${sus.length} payees to sort</b></span><span class="chev">›</span></button>`);
+  const tile = (k, v, sub, neg, extra = '', id = '') => `<button class="stat ${extra}" data-action="home-detail" data-k="${id}" aria-label="${k}: see the transactions"><div class="k">${k}<span class="chev">›</span></div><div class="v num ${neg ? 'neg' : ''}">${v}</div><div class="s">${sub}</div></button>`;
   return `
   ${monthChips()}${coverageNote(m)}
-  <section class="card hero-card">
-    <div class="eyebrow">Safe to spend · ${c.monthOver ? mLabel(m, true) : `${c.dim - c.day} days left`}</div>
-    <div class="hero-num num ${remaining < 0 ? 'neg' : ''}">${first}</div>
-    <div class="hero-aud num">${second}${!c.monthOver && c.sts.perDay ? ` · ${fmtPlain(c.sts.perDay)} a day` : ''}</div>
-    <div class="pace"><div class="pace-bar"><div class="pace-fill pace-${c.hp.status}" style="width:${Math.max(1, used)}%"></div><div class="pace-mark" style="left:${(c.day / c.dim * 100).toFixed(1)}%" title="Where you'd be at an even pace"></div></div>
-      <div class="row tiny"><span class="muted">${fmtPlain(c.spentVar)} of ${fmtPlain(Math.max(0, c.sts.monthlyAllowance))} spent</span><span>${paceText}</span></div></div>
-    <details class="explain"><summary>How this is worked out</summary>
-      <table class="mini"><tr><td>Income</td><td class="r">${inr(D.income)}</td></tr><tr><td>Fixed bills</td><td class="r">− ${inr(D.fixedTotal)}</td></tr><tr><td>SIPs</td><td class="r">− ${inr(D.sipTotal)}</td></tr><tr><td>Extra savings</td><td class="r">− ${inr(S.settings.savingsGoal)}</td></tr><tr><td><b>For everyday spending</b></td><td class="r"><b>${inr(c.sts.monthlyAllowance)}</b></td></tr><tr><td>Spent so far</td><td class="r">− ${inr(c.spentVar)}</td></tr></table>
-      ${c.oneOffs.length ? `<div class="tiny muted" style="margin-top:6px">One-offs left out: ${c.oneOffs.map(t => esc(E.payeeName(t)) + ' ' + inr(t.debit)).join(', ')}.</div>` : ''}
-    </details>
+  <section class="stats4">
+    ${tile('Came in', big(cameIn), mLabel(m, true), false, '', 'in')}
+    ${tile('Left in the bank', big(left.total), leftSub, left.total < 0, '', 'left')}
+    ${tile('SIPs', big(sipAmt), sipSub, false, '', 'sip')}
+    ${tile('Kept', big(kept), keptSub, kept < 0, '', 'kept')}
+    ${tile('Can spend', big(can), canSub, can < 0, 'stat-key', 'can')}
   </section>
-
-  <section class="card">
-    <div class="eyebrow">${mLabel(m, true)}</div>
-    <div class="grid3 quiet">
-      <div><div class="k">Spent</div><div class="v num">${inr(mo.spend)}</div></div>
-      <div><div class="k">Income</div><div class="v num">${inr(mo.income)}</div></div>
-      <div><div class="k">Invested</div><div class="v num">${inr(mo.invest)}</div></div>
-    </div>
-  </section>
-
-  ${attention.length ? `<section class="card flush">${attention.join('')}</section>` : ''}
-
+  <details class="explain home-explain"><summary>How these are worked out</summary>
+    <table class="mini">
+      <tr><td>Came in</td><td class="r">Salary, refunds, interest and money received. Moves between your own accounts are left out.</td></tr>
+      <tr><td>Left</td><td class="r">Last balance on each account's statement, added up.</td></tr>
+      <tr><td>SIPs</td><td class="r">Money that went into SIPs and other investments this month.</td></tr>
+      <tr><td>Kept</td><td class="r">Came in ${inr(mo.income)} − spent ${inr(mo.spend)} − SIPs ${inr(mo.invest)}. What stayed in your account.</td></tr>
+      <tr><td>Can spend</td><td class="r">Income ${inr(D.income)} − bills ${inr(D.fixedTotal)} − SIPs ${inr(D.sipTotal)} − extra savings ${inr(S.settings.savingsGoal)} − spent ${inr(c.spentVar)}</td></tr>
+    </table>
+  </details>
+  ${notes.length ? `<section class="card flush">${notes.join('')}</section>` : ''}
   <div class="home-links"><button class="link" data-action="pick-pdf">Add statements</button><span class="muted">·</span><button class="link" data-action="open-achievements">Achievements</button></div>`;
+}
+/** Tap a Home number: the transactions behind it. */
+function homeDetail(k) {
+  const m = S.ui.month, c = monthCtx(m), mo = c.mo;
+  const inMonth = S.txns.filter(t => t.date.startsWith(m));
+  const byDate = (a, b) => b.date.localeCompare(a.date) || (b.seq ?? 0) - (a.seq ?? 0);
+  const kind = t => E.CAT[t.cat]?.kind;
+  const list = (rows, empty) => rows.length ? `<div class="stack-txn">${[...rows].sort(byDate).map(txnRow).join('')}</div>` : `<div class="sub" style="margin-top:8px">${empty}</div>`;
+  const head = (title, total, sub) => `<h2>${title}</h2><div class="detail-total num">${fmtPlain(total)}</div><div class="sub">${sub}</div>`;
+  let html = '';
+  if (k === 'in') {
+    const rows = inMonth.filter(t => kind(t) === 'income' && t.credit > 0);
+    html = head('Came in', mo.income, `${rows.length} payments received in ${mLabel(m, true)} · moves between your own accounts left out`) + list(rows, 'Nothing came in this month.');
+  } else if (k === 'left') {
+    const left = balancesAt(m);
+    html = head('Left in the bank', left.total, `Last balance on each account up to the end of ${mLabel(m, true)}`) +
+      left.accts.map(a => {
+        const rows = inMonth.filter(t => t.bank === a.bank && (t.acct || '') === (a.acct || ''));
+        return `<details class="acct-block" ${left.accts.length === 1 ? 'open' : ''}><summary><span><b>${esc(a.bank)}${a.acct ? ' ••' + esc(a.acct) : ''}</b><span class="muted tiny"> · as of ${dLabel(a.date)}</span></span><span class="num">${fmtPlain(a.bal)}</span></summary>
+          ${list(rows, `No ${esc(a.bank)} transactions in ${mLabel(m, true)}.`)}</details>`;
+      }).join('');
+  } else if (k === 'sip') {
+    const inv = inMonth.filter(t => kind(t) === 'invest');
+    const sm = D.sip.months[m];
+    const ord = d => d + (d % 10 === 1 && d !== 11 ? 'st' : d % 10 === 2 && d !== 12 ? 'nd' : d % 10 === 3 && d !== 13 ? 'rd' : 'th');
+    const stTxt = { paid: 'paid', partial: '<b class="bad">part bounced</b>', missed: '<b class="bad">bounced</b>', due: 'due', unknown: 'not in a statement yet' };
+    const plan = sm?.rows?.length ? `<table class="mini" style="margin-top:10px">${sm.rows.map(r => `<tr><td>${esc(r.name)}${r.count > 1 ? ' ×' + r.count : ''} · ${ord(r.day)}</td><td class="r">${inr(r.amount * r.count)} · ${stTxt[r.status] || esc(r.status)}</td></tr>`).join('')}</table>` : '';
+    html = head('SIPs', mo.invest, `Into SIPs & investments in ${mLabel(m, true)}${sm?.missed ? ` · ${inr(sm.missed)} bounced` : ''}`) + plan +
+      `<h3>Transactions · ${inv.length}</h3>${list(inv, 'No SIPs or investments this month.')}`;
+  } else if (k === 'kept') {
+    const spend = inMonth.filter(t => kind(t) === 'spend');
+    const inc = inMonth.filter(t => kind(t) === 'income' && t.credit > 0);
+    const kept = mo.income - mo.spend - mo.invest;
+    html = head('Kept', kept, kept >= 0 ? 'Money that came in and stayed in your account' : 'You spent more than came in this month') +
+      `<table class="mini" style="margin-top:12px"><tr><td>Came in</td><td class="r">${inr(mo.income)}</td></tr><tr><td>Spent</td><td class="r">− ${inr(mo.spend)}</td></tr><tr><td>SIPs</td><td class="r">− ${inr(mo.invest)}</td></tr><tr><td><b>Kept</b></td><td class="r"><b>${inr(kept)}</b></td></tr></table>
+       <details class="acct-block"><summary><span><b>Came in</b><span class="muted tiny"> · ${inc.length}</span></span><span class="num">${fmtPlain(mo.income)}</span></summary>${list(inc, 'Nothing came in this month.')}</details>
+       <details class="acct-block"><summary><span><b>Spent</b><span class="muted tiny"> · ${spend.length}</span></span><span class="num">${fmtPlain(mo.spend)}</span></summary>${list(spend, 'No spending this month.')}</details>`;
+  } else if (k === 'can') {
+    const counted = inMonth.filter(t => t.debit > 0 && kind(t) === 'spend' && !t.fixed && t.debit < S.settings.oneOff);
+    html = head('Can spend', c.sts.remaining, c.sts.remaining < 0 ? `Over budget by ${fmtPlain(-c.sts.remaining)}${c.monthOver ? ` in ${mLabel(m, true)}` : ''}` : c.monthOver ? `Left unspent in ${mLabel(m, true)}` : `${c.dim - c.day} days left · ${fmtPlain(Math.max(0, c.sts.perDay))} a day`) +
+      `<table class="mini" style="margin-top:12px"><tr><td>Monthly income</td><td class="r">${inr(D.income)}</td></tr><tr><td>Fixed bills</td><td class="r">− ${inr(D.fixedTotal)}</td></tr><tr><td>SIPs</td><td class="r">− ${inr(D.sipTotal)}</td></tr><tr><td>Extra savings</td><td class="r">− ${inr(S.settings.savingsGoal)}</td></tr><tr><td><b>For everyday spending</b></td><td class="r"><b>${inr(c.sts.monthlyAllowance)}</b></td></tr><tr><td>Spent so far (below)</td><td class="r">− ${inr(c.spentVar)}</td></tr></table>
+       <h3>Everyday spending counted · ${counted.length}</h3>${list(counted, 'Nothing spent yet this month.')}
+       ${c.oneOffs.length ? `<div class="tiny muted" style="margin-top:8px">Big one-offs (over ${inr(S.settings.oneOff)}) and fixed bills aren't counted here.</div>` : ''}`;
+  }
+  openSheet(html + `<div class="btn-row" style="margin-top:14px"><button class="btn" data-action="close-sheet">Close</button></div>`, 'detail:' + k);
+}
+
+/** Each account's running balance at the end of month m (or the last row before it). */
+function balancesAt(m) {
+  const end = m + '-31';
+  const by = new Map();
+  S.txns.forEach((t, i) => { if (t.date <= end) { const k = t.bank + '|' + (t.acct || ''); (by.get(k) || by.set(k, []).get(k)).push({ t, i }); } });
+  const accts = [];
+  for (const rows of by.values()) {
+    const lastDate = rows.reduce((d, r) => (r.t.date > d ? r.t.date : d), '');
+    const same = rows.filter(r => r.t.date === lastDate);
+    // several rows on the last day: the final one is the row no other row continues from
+    const r2 = x => Math.round(x * 100) / 100;
+    const fin = same.find(c => !same.some(o => o !== c && r2(c.t.balance - o.t.debit + o.t.credit) === r2(o.t.balance))) ||
+      same.sort((a, b) => (a.t.seq ?? 0) - (b.t.seq ?? 0) || a.i - b.i)[same.length - 1];
+    accts.push({ bank: fin.t.bank, acct: fin.t.acct, date: lastDate, bal: fin.t.balance });
+  }
+  accts.sort((a, b) => b.date.localeCompare(a.date));
+  return { total: accts.reduce((s, x) => s + x.bal, 0), accts };
 }
 
 // ---------------- Achievements (quiet: pop up once, then live in their own sheet) ----------------
@@ -793,8 +866,13 @@ document.addEventListener('pointermove', e => { const el = e.target.closest?.('[
 document.addEventListener('pointerdown', e => { const el = e.target.closest?.('[data-tip]'); if (el) showTip(el, e); });
 
 // ---------------- sheets ----------------
-function openSheet(html) { const s = $('#sheet'); s.querySelector('.sheet-body').innerHTML = html; s.hidden = false; }
-function closeSheet() { $('#sheet').hidden = true; }
+// A transaction opened from a Home number goes back to that list when it closes.
+let sheetKind = null, returnTo = null;
+function openSheet(html, kind = null) { const s = $('#sheet'); s.querySelector('.sheet-body').innerHTML = html; s.hidden = false; sheetKind = kind; }
+function closeSheet() {
+  $('#sheet').hidden = true; sheetKind = null;
+  if (returnTo) { const k = returnTo; returnTo = null; setTimeout(() => { if ($('#sheet').hidden && S.ui.tab === 'home') homeDetail(k); }, 0); }
+}
 function toast(msg, ms = 2600) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), ms); }
 
 const INCOME_CATS = ['salary', 'interest', 'refund', 'income_other', 'suspense_in', 'bigtransfer_in'];
@@ -963,8 +1041,8 @@ function checkList(c) {
 let pdfjs;
 async function getPdfjs() {
   if (pdfjs) return pdfjs;
-  pdfjs = await import('../vendor/pdf.min.js?v=20261113f');
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261113f', import.meta.url).href;
+  pdfjs = await import('../vendor/pdf.min.js?v=20261113i');
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261113i', import.meta.url).href;
   return pdfjs;
 }
 function askPassword(name, wrong) {
@@ -1061,11 +1139,11 @@ function checkFxAlerts() {
 // ---------------- events ----------------
 document.addEventListener('click', async e => {
   const tab = e.target.closest('[data-tab]');
-  if (tab) { S.ui.tab = tab.dataset.tab; selTx = null; save(); render(); scrollTo(0, 0); return; }
+  if (tab) { returnTo = null; if (!$('#sheet').hidden) closeSheet(); S.ui.tab = tab.dataset.tab; selTx = null; save(); render(); scrollTo(0, 0); return; }
   const el = e.target.closest('[data-action]'); if (!el) return;
   const a = el.dataset.action;
   switch (a) {
-    case 'pick-pdf': e.preventDefault(); e.stopPropagation(); closeSheet(); $('#pdfInput').click(); break;
+    case 'pick-pdf': e.preventDefault(); e.stopPropagation(); returnTo = null; closeSheet(); $('#pdfInput').click(); break;
     case 'load-demo': { const keep = { fx: S.fx, sydney: S.sydney }; S = deepMerge(defaults(), keep); const d = makeDemo(); S.txns = d.txns; S.statements = d.statements; S.settings.holderNames = [d.holder]; S.demo = true; derive(); save(); closeSheet(); render(); toast('Demo data loaded'); break; }
     case 'clear-data': openSheet(`<h2>Delete everything?</h2><div class="sub">This removes your transactions, categories and settings from this browser. Export a backup first if you might need it.</div><div class="btn-row" style="margin-top:12px"><button class="btn danger" data-action="confirm-clear">Delete</button><button class="btn" data-action="close-sheet">Keep</button></div>`); break;
     case 'reload-seed': applySeed(true); derive(); closeSheet(); render(); toast('Your statements are loaded'); break;
@@ -1082,7 +1160,8 @@ document.addEventListener('click', async e => {
     case 'accept-all': { let n = 0; for (const x of D.suspense) { const sg = suggestionFor(x); if (sg) { setPayeeCat(x, sg.cat); n++; } } derive(); save(); suspenseSheet(true); render(); toast(`Sorted ${n} payees`); break; }
     case 'month': S.ui.month = el.dataset.m; save(); render(); break;
     case 'cat': S.ui.catFilter = el.dataset.c || null; save(); render(); document.querySelector('.search')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); break;
-    case 'txn': txnSheet(el.dataset.id); break;
+    case 'txn': if (sheetKind?.startsWith('detail:') && !$('#sheet').hidden) returnTo = sheetKind.slice(7); txnSheet(el.dataset.id); break;
+    case 'home-detail': homeDetail(el.dataset.k); break;
     case 'sel-start': selTx = new Set(); render(); break;
     case 'sel-done': selTx = null; render(); break;
     case 'sel-txn': { const id = el.dataset.id; selTx.has(id) ? selTx.delete(id) : selTx.add(id); const y = window.scrollY; render(); window.scrollTo(0, y); break; }
