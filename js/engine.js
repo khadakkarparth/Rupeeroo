@@ -1,6 +1,6 @@
 // Money logic: categories, own-account transfers, recurring (fixed) costs,
 // variable-spend forecast, safe-to-spend and the game layer. No network, no DOM.
-import { counterparty } from './parser.js?v=20261113c';
+import { counterparty } from './parser.js?v=20261113d';
 
 export const CATEGORIES = [
   // id, label, icon, kind: spend | income | transfer | invest | excluded
@@ -146,16 +146,25 @@ export function promoteSalary(txns, ctx) {
 
 export function markTransfers(txns, holderNames) {
   const toks = holderNames.flatMap(holderTokens);
-  for (const t of txns) {
-    t.isTransfer = false;
-    const n = norm(counterparty(t).name);
-    if (toks.length && toks.some(k => k.length >= 6 && n.startsWith(k.slice(0, Math.min(k.length, 10))))) t.isTransfer = true;
-  }
-  // pair a debit in one bank with an equal credit in another within 3 days
+  const first = (holderNames[0] || '').toUpperCase().split(/\s+/)[0] || '';
+  const accts = [...new Set(txns.map(t => t.acct).filter(Boolean))];
+  // Signs that a narration is about the user's own money: their name (full, or first name + start of
+  // middle name as banks truncate it), or the last digits of their other account ("XX370").
+  const ownHint = t => {
+    const d = norm(t.desc);
+    if (toks.some(k => k.length >= 6 && d.includes(k.slice(0, Math.min(k.length, 10))))) return true;
+    const raw = t.desc.toUpperCase();
+    if (accts.some(a => a !== t.acct && (raw.includes('XX' + a.slice(-3)) || raw.includes('X' + a))) ) return true;
+    const c = norm(counterparty(t).name);
+    return first.length >= 4 && c.length >= 4 && first.startsWith(c);   // "PART" for PARTH
+  };
+  for (const t of txns) t.isTransfer = !/ATM|CASH|POS TXN/i.test(t.desc) && ownHint(t);
+  // a debit in one bank and an equal credit in another within 3 days, where at least one side names you
   const credits = txns.filter(t => t.credit > 0);
-  for (const d of txns.filter(t => t.debit > 0)) {
+  for (const d of txns.filter(t => t.debit > 0 && !/ATM|CASH|POS TXN/i.test(t.desc))) {
     const dd = Date.parse(d.date);
-    const m = credits.find(c => !c._paired && c.bank !== d.bank && Math.abs(c.credit - d.debit) < 0.01 && Math.abs(Date.parse(c.date) - dd) <= 3 * 864e5);
+    const m = credits.find(c => !c._paired && c.bank !== d.bank && Math.abs(c.credit - d.debit) < 0.01 &&
+      Math.abs(Date.parse(c.date) - dd) <= 3 * 864e5 && (d.isTransfer || c.isTransfer || !toks.length));
     if (m) { d.isTransfer = m.isTransfer = true; m._paired = true; }
   }
   credits.forEach(c => delete c._paired);

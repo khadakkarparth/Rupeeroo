@@ -1,10 +1,10 @@
-import { extractPages, parseStatement, detectBank, counterparty } from './parser.js?v=20261113c';
-import * as E from './engine.js?v=20261113c';
-import { fetchRatesLive, fxStats } from './fx.js?v=20261113c';
-import { makeDemo } from './demo.js?v=20261113c';
-import { lookupMany, webSearchUrl } from './lookup.js?v=20261113c';
-import * as V from './visa.js?v=20261113c';
-import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261113c';
+import { extractPages, parseStatement, detectBank, counterparty } from './parser.js?v=20261113d';
+import * as E from './engine.js?v=20261113d';
+import { fetchRatesLive, fxStats } from './fx.js?v=20261113d';
+import { makeDemo } from './demo.js?v=20261113d';
+import { lookupMany, webSearchUrl } from './lookup.js?v=20261113d';
+import * as V from './visa.js?v=20261113d';
+import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261113d';
 
 const VISA_LIVING_AUD = 29710; // Home Affairs 12-month living cost for a primary student (checked Nov 2026)
 const WORK_LIMIT = 48;         // hours per fortnight while the course is in session (condition 8105)
@@ -864,8 +864,8 @@ function checkList(c) {
 let pdfjs;
 async function getPdfjs() {
   if (pdfjs) return pdfjs;
-  pdfjs = await import('../vendor/pdf.min.js?v=20261113c');
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261113c', import.meta.url).href;
+  pdfjs = await import('../vendor/pdf.min.js?v=20261113d');
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261113d', import.meta.url).href;
   return pdfjs;
 }
 function askPassword(name, wrong) {
