@@ -22,7 +22,7 @@ export const CATEGORIES = [
   ['friends', 'Friends', '🧑‍🤝‍🧑', 'spend'],
   ['gifts', 'Gifts', '🎁', 'spend'],
   ['insurance', 'Insurance', '🛡️', 'spend'],
-  ['suspense', 'Suspense (to sort)', '❓', 'spend'],
+  ['suspense', 'Suspense (to sort)', '·', 'spend'],
   ['cash', 'Cash withdrawal', '💵', 'spend'],
   ['charges', 'Bank charges', '⚠️', 'spend'],
   ['other', 'Other spending', '📦', 'spend'],
@@ -34,7 +34,7 @@ export const CATEGORIES = [
   ['interest', 'Interest & dividends', '🪙', 'income'],
   ['refund', 'Refunds', '↩️', 'income'],
   ['income_other', 'Money received', '📥', 'income'],
-  ['suspense_in', 'Suspense (received)', '❔', 'income'],
+  ['suspense_in', 'Suspense (received)', '·', 'income'],
   ['bigtransfer_in', 'Large transfers in', '🔀', 'excluded'],
   ['transfer', 'Between my accounts', '🔄', 'transfer'],
 ].map(([id, label, icon, kind]) => ({ id, label, icon, kind }));

@@ -137,9 +137,10 @@ function monthCtx(m) {
 
 // ---------------- rendering ----------------
 function render() {
+  setTimeout(checkAchievements, 600);
   document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab === S.ui.tab));
   updateFxPill();
-  $('#banner').innerHTML = S.demo ? `<div class="demo-banner"><span>👀 You're looking at <b>demo data</b>.</span><button class="btn small" data-action="clear-data">Use my own</button></div>` : '';
+  $('#banner').innerHTML = S.demo ? `<div class="demo-banner"><span>You're looking at <b>demo data</b>.</span><button class="btn small" data-action="clear-data">Use my own</button></div>` : '';
   const v = $('#view');
   if (!S.txns.length && !['fx', 'sydney'].includes(S.ui.tab)) { v.innerHTML = viewEmpty(); return; }
   v.innerHTML = ({ home: viewHome, spend: viewSpend, plan: viewPlan, fx: viewFx, sydney: viewSydney })[S.ui.tab]();
@@ -150,12 +151,12 @@ function viewEmpty() {
   return `
   <div class="card" style="text-align:center">
     <div class="drop" id="drop" data-action="pick-pdf">
-      <div class="big">📄</div>
+      <div class="big"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg></div>
       <div style="font-weight:650;font-size:16px;margin-top:6px">Add your bank statements</div>
       <div class="sub" style="margin-top:4px">PDF statements from <b>SBI</b> or <b>IndusInd</b>. Pick several at once.</div>
       <button class="btn primary" style="margin-top:14px" data-action="pick-pdf">Choose PDF files</button>
     </div>
-    <div class="privacy"><span>🔒</span><span>Statements are read <b>on this device</b> and saved only in this browser. Nothing is uploaded. The only network call is for exchange rates.</span></div>
+    <div class="privacy"><span>Statements are read <b>on this device</b> and saved only in this browser. Nothing is uploaded. The only network call is for exchange rates.</span></div>
     <button class="btn block" style="margin-top:12px" data-action="load-demo">Try it with demo data</button>
   </div>
   ${S.statements.length ? '' : `<div class="card"><h2>How it works</h2><ol class="sub" style="padding-left:18px;margin:0">
@@ -171,7 +172,7 @@ function coverageNote(m) {
   const monthEnd = m + '-' + String(daysIn(m)).padStart(2, '0');
   const short = Object.keys(last).filter(b => last[b] < monthEnd && last[b] < D.dataEnd && first[b] <= monthEnd);
   if (!short.length) return '';
-  return `<div class="coverage">📎 ${short.map(b => `${b} statement ends ${dLabel(last[b])}`).join(', ')}, so ${mLabel(m, true)} is missing some ${short.join(' and ')} spending. <a href="#" data-action="pick-pdf">Add a newer statement</a>.</div>`;
+  return `<div class="coverage">${short.map(b => `${b} statement ends ${dLabel(last[b])}`).join(', ')}, so ${mLabel(m, true)} is missing some ${short.join(' and ')} spending. <a href="#" data-action="pick-pdf">Add a newer statement</a>.</div>`;
 }
 
 function monthChips() {
@@ -188,81 +189,120 @@ function syncChipNav(row) {
 
 function viewHome() {
   const m = S.ui.month, c = monthCtx(m), mo = c.mo;
-  const lvl = E.levelFor(D.saved);
-  const st = E.streaks(S.txns, Math.max(0, c.sts.monthlyAllowance / c.dim), m);
-  const months = D.months; const prev = months[months.indexOf(m) - 1];
-  const qs = E.quests(D.mon, m, prev, { fmt: fmtPlain, savingsGoal: S.settings.savingsGoal, noSpendMonth: st.noSpendMonth, monthOver: c.monthOver });
-  const sm = D.sip.months[m];
-  if (sm && D.sipTotal) {
-    const expected = sm.rows.reduce((a, r) => a + r.amount * r.count, 0);
-    qs.unshift({ id: 'sip', icon: '📈', title: `All SIPs go through (${fmtPlain(expected)})`, sub: 'Keep enough balance before each auto-debit', progress: Math.min(1, sm.paid / expected), done: sm.paid >= expected, failed: sm.missed > 0, xp: 200, kind: 'sip' });
-  }
-  const qxp = qs.filter(q => q.done).reduce((s, q) => s + q.xp, 0);
   const remaining = c.sts.remaining;
-  const ring = ringSvg(lvl.pct);
+  const first = S.settings.primary === 'AUD' && rate() ? aud(remaining) : inr(remaining);
+  const second = S.settings.primary === 'AUD' && rate() ? inr(remaining) : aud(remaining);
+  const paceText = { good: 'On track', warning: 'A little ahead of pace', serious: 'Spending fast', critical: c.hp.hp <= 10 ? 'Almost used up' : 'Well over pace' }[c.hp.status];
+  const used = c.sts.monthlyAllowance > 0 ? Math.min(100, c.spentVar / c.sts.monthlyAllowance * 100) : 100;
+  const sm = D.sip.months[m];
+  const attention = [];
+  if (sm?.missed) attention.push(`<button class="note-row" data-tab="plan"><span class="dot dot-bad"></span><span><b>${inr(sm.missed)} of SIPs bounced</b><span class="muted"> · ${sm.charges ? inr(sm.charges, 0) + ' in bank charges' : 'check your balance before the due date'}</span></span><span class="chev">›</span></button>`);
+  const sus = (D.suspense || []).filter(x => x.dir === 'D');
+  if (sus.length) attention.push(`<button class="note-row" data-action="open-suspense"><span class="dot dot-warn"></span><span><b>${sus.length} payees to sort</b><span class="muted"> · ${inr(sus.reduce((x, y) => x + y.amt, 0))} uncategorised</span></span><span class="chev">›</span></button>`);
   return `
   ${monthChips()}${coverageNote(m)}
-  <div class="card">
-    <h2>Safe to spend <small>${c.monthOver ? mLabel(m, true) + ' (closed)' : `${c.dim - c.day} days left in ${mLabel(m, true)}`}</small></h2>
-    <div class="hero-num num ${remaining < 0 ? 'neg' : ''}">${S.settings.primary === 'AUD' && rate() ? aud(remaining) : inr(remaining)}</div>
-    <div class="hero-aud num">${S.settings.primary === 'AUD' && rate() ? inr(remaining) : aud(remaining)}${!c.monthOver && c.sts.perDay ? ` · about ${fmtPlain(c.sts.perDay)} a day` : ''}</div>
-    <div style="margin-top:14px" class="row"><span class="tiny muted">Budget health</span><span class="badge">${hpIcon(c.hp.status)} ${c.hp.label} · ${c.hp.hp} HP</span></div>
-    <div class="hp" style="margin-top:6px" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${c.hp.hp}" aria-label="Budget health"><div class="status-${c.hp.status}" style="width:${Math.max(2, c.hp.hp)}%"></div></div>
-    <div class="tiny muted" style="margin-top:8px">${fmtPlain(D.income)} income − ${fmtPlain(D.fixedTotal)} bills − ${fmtPlain(D.sipTotal)} SIPs − ${fmtPlain(S.settings.savingsGoal)} extra savings = ${fmtPlain(c.sts.monthlyAllowance)} for everyday spending. Spent ${fmtPlain(c.spentVar)} so far.</div>
-    ${c.oneOffs.length ? `<div class="tiny muted" style="margin-top:6px">Not counted as everyday: ${c.oneOffs.map(t => esc(E.payeeName(t)) + ' ' + inr(t.debit)).join(', ')}.</div>` : ''}
-  </div>
-  ${sipCard(m, true)}
-  ${suspenseCard()}
+  <section class="card hero-card">
+    <div class="eyebrow">Safe to spend · ${c.monthOver ? mLabel(m, true) : `${c.dim - c.day} days left`}</div>
+    <div class="hero-num num ${remaining < 0 ? 'neg' : ''}">${first}</div>
+    <div class="hero-aud num">${second}${!c.monthOver && c.sts.perDay ? ` · ${fmtPlain(c.sts.perDay)} a day` : ''}</div>
+    <div class="pace"><div class="pace-bar"><div class="pace-fill pace-${c.hp.status}" style="width:${Math.max(1, used)}%"></div><div class="pace-mark" style="left:${(c.day / c.dim * 100).toFixed(1)}%" title="Where you'd be at an even pace"></div></div>
+      <div class="row tiny"><span class="muted">${fmtPlain(c.spentVar)} of ${fmtPlain(Math.max(0, c.sts.monthlyAllowance))} spent</span><span>${paceText}</span></div></div>
+    <details class="explain"><summary>How this is worked out</summary>
+      <table class="mini"><tr><td>Income</td><td class="r">${inr(D.income)}</td></tr><tr><td>Fixed bills</td><td class="r">− ${inr(D.fixedTotal)}</td></tr><tr><td>SIPs</td><td class="r">− ${inr(D.sipTotal)}</td></tr><tr><td>Extra savings</td><td class="r">− ${inr(S.settings.savingsGoal)}</td></tr><tr><td><b>For everyday spending</b></td><td class="r"><b>${inr(c.sts.monthlyAllowance)}</b></td></tr><tr><td>Spent so far</td><td class="r">− ${inr(c.spentVar)}</td></tr></table>
+      ${c.oneOffs.length ? `<div class="tiny muted" style="margin-top:6px">One-offs left out: ${c.oneOffs.map(t => esc(E.payeeName(t)) + ' ' + inr(t.debit)).join(', ')}.</div>` : ''}
+    </details>
+  </section>
 
-  <div class="card">
-    <div class="level">
-      <div class="ring">${ring}</div>
-      <div style="flex:1">
-        <div class="row"><b>Level ${lvl.level} · ${lvl.title}</b><span class="tiny muted">${qxp ? '+' + qxp + ' XP' : ''}</span></div>
-        <div class="tiny muted">Saved so far ${fmtPlain(D.saved)}${lvl.to ? ` · next: ${lvl.nextTitle} at ${fmtPlain(lvl.to)}` : ' · max level'}</div>
-        <div class="xpbar"><div style="width:${Math.round(lvl.pct * 100)}%"></div></div>
-      </div>
+  <section class="card">
+    <div class="eyebrow">${mLabel(m, true)}</div>
+    <div class="grid3 quiet">
+      <div><div class="k">Spent</div><div class="v num">${inr(mo.spend)}</div></div>
+      <div><div class="k">Income</div><div class="v num">${inr(mo.income)}</div></div>
+      <div><div class="k">Invested</div><div class="v num">${inr(mo.invest)}</div></div>
     </div>
-    <div class="grid3" style="margin-top:14px">
-      <div class="stat"><div class="k">🔥 Streak</div><div class="v num">${st.current}d</div><div class="a">under daily budget</div></div>
-      <div class="stat"><div class="k">🏆 Best</div><div class="v num">${st.best}d</div><div class="a">longest streak</div></div>
-      <div class="stat"><div class="k">🧘 No-spend</div><div class="v num">${st.noSpendMonth}</div><div class="a">days in ${mLabel(m)}</div></div>
-    </div>
-    <div class="tiny muted" style="margin-top:8px">Streaks count up to your latest statement (${dLabel(st.asOf || D.dataEnd)}).</div>
-  </div>
+  </section>
 
-  <div class="card">
-    <h2>Quests for ${mLabel(m, true)} <small>${qs.filter(q => q.done).length}/${qs.length} done</small></h2>
-    ${qs.map(q => `<div class="quest"><div class="qi">${q.icon}</div><div><div class="qt">${esc(q.title)}</div><div class="qs">${esc(q.sub)}${q.now != null && q.kind === 'cap' ? ` · now ${fmtPlain(q.now)}` : ''}${q.kind === 'count' ? ` · ${q.now}/5` : ''}</div>
-      <div class="qbar ${q.done ? 'done' : q.failed ? 'fail' : ''}"><div style="width:${Math.round(q.progress * 100)}%"></div></div></div>
-      <div class="xp">${q.done ? '✅' : q.failed ? '❌' : ''} ${q.xp} XP</div></div>`).join('')}
-  </div>
+  ${attention.length ? `<section class="card flush">${attention.join('')}</section>` : ''}
 
-  <div class="card">
-    <h2>${mLabel(m, true)} at a glance</h2>
-    <div class="grid2">
-      <div class="stat"><div class="k">Spent</div><div class="v">${money(mo.spend, { stacked: true })}</div></div>
-      <div class="stat"><div class="k">Came in</div><div class="v">${money(mo.income, { stacked: true })}</div></div>
-      <div class="stat"><div class="k">Invested</div><div class="v">${money(mo.invest, { stacked: true })}</div></div>
-      <div class="stat"><div class="k">Left over</div><div class="v ${mo.income - mo.spend < 0 ? 'neg' : 'pos'}">${money(mo.income - mo.spend, { stacked: true })}</div></div>
+  <div class="home-links"><button class="link" data-action="pick-pdf">Add statements</button><span class="muted">·</span><button class="link" data-action="open-achievements">Achievements</button></div>`;
+}
+
+// ---------------- Achievements (quiet: pop up once, then live in their own sheet) ----------------
+function achievementState() {
+  const list = [];
+  const lvl = E.levelFor(D.saved);
+  for (let i = 1; i < lvl.level; i++) list.push({ id: 'level-' + (i + 1), title: `Saved ${inr(E.LEVELS[i][0])}`, sub: E.LEVELS[i][1] });
+  const lastMonth = D.months[D.months.length - 1];
+  for (const m of D.months) {
+    const c = monthCtx(m); const prev = D.months[D.months.indexOf(m) - 1];
+    const st = E.streaks(S.txns, Math.max(0, c.sts.monthlyAllowance / c.dim), m);
+    const qs = E.quests(D.mon, m, prev, { fmt: fmtPlain, savingsGoal: S.settings.savingsGoal, noSpendMonth: st.noSpendMonth, monthOver: c.monthOver });
+    qs.filter(q => q.done).forEach(q => list.push({ id: `q-${m}-${q.id}`, title: q.title, sub: mLabel(m, true) }));
+    const sm = D.sip.months[m];
+    if (sm && c.monthOver && sm.missed === 0 && sm.rows.every(r => r.status === 'paid')) list.push({ id: `sip-${m}`, title: 'Every SIP went through', sub: mLabel(m, true) });
+    if (m === lastMonth) [7, 14, 30].forEach(n => { if (st.best >= n) list.push({ id: `streak-${n}`, title: `${n} days in a row under budget`, sub: 'Best streak' }); });
+  }
+  if (S.txns.length && !(D.suspense || []).length) list.push({ id: 'suspense-zero', title: 'Everything categorised', sub: 'Suspense is empty' });
+  return list;
+}
+let achQueue = [], achShowing = false;
+function checkAchievements() {
+  if (!S.txns.length || S.demo) return;
+  const all = achievementState();
+  const firstRun = !S.achieved;
+  S.achieved ??= {};
+  const fresh = all.filter(a => !S.achieved[a.id]);
+  fresh.forEach(a => (S.achieved[a.id] = today()));
+  if (fresh.length) save();
+  if (firstRun) return; // don't flood on first load; history is still listed in Achievements
+  achQueue.push(...fresh.slice(-3));
+  showNextAchievement();
+}
+function showNextAchievement() {
+  if (achShowing || !achQueue.length) return;
+  achShowing = true;
+  const a = achQueue.shift(); const el = $('#achPop');
+  el.innerHTML = `<div class="ach-k">Achievement</div><div class="ach-t">${esc(a.title)}</div><div class="ach-s">${esc(a.sub)}</div>`;
+  el.hidden = false; requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => { el.classList.remove('show'); setTimeout(() => { el.hidden = true; achShowing = false; showNextAchievement(); }, 350); }, 3800);
+}
+function achievementsSheet() {
+  const lvl = E.levelFor(D.saved);
+  const m = S.ui.month, c = monthCtx(m), prev = D.months[D.months.indexOf(m) - 1];
+  const st = E.streaks(S.txns, Math.max(0, c.sts.monthlyAllowance / c.dim), m);
+  const qs = E.quests(D.mon, m, prev, { fmt: fmtPlain, savingsGoal: S.settings.savingsGoal, noSpendMonth: st.noSpendMonth, monthOver: c.monthOver });
+  const all = achievementState(); const got = S.achieved || {};
+  openSheet(`
+    <div class="row"><h2>Achievements</h2><button class="btn small" data-action="close-sheet">Done</button></div>
+    <div class="eyebrow" style="margin-top:14px">Savings milestone</div>
+    <div class="row"><b>${lvl.title}</b><span class="tiny muted">${inr(D.saved)} saved</span></div>
+    <div class="pace-bar" style="margin-top:8px"><div class="pace-fill pace-good" style="width:${Math.round(lvl.pct * 100)}%"></div></div>
+    <div class="tiny muted" style="margin-top:6px">${lvl.to ? `Next: ${lvl.nextTitle} at ${inr(lvl.to)}` : 'Top milestone reached'}</div>
+    <div class="grid3 quiet" style="margin-top:16px">
+      <div><div class="k">Current streak</div><div class="v num">${st.current} days</div></div>
+      <div><div class="k">Best streak</div><div class="v num">${st.best} days</div></div>
+      <div><div class="k">No-spend days</div><div class="v num">${st.noSpendMonth}</div></div>
     </div>
-    <button class="btn block" style="margin-top:12px" data-action="pick-pdf">＋ Add more statements</button>
-  </div>`;
+    <div class="eyebrow" style="margin-top:18px">Goals for ${mLabel(m, true)}</div>
+    ${qs.map(q => `<div class="goal"><div class="row"><span>${esc(q.title)}</span><span class="tiny ${q.done ? 'ok' : q.failed ? 'bad' : 'muted'}">${q.done ? 'Done' : q.failed ? 'Missed' : q.kind === 'cap' ? `${fmtPlain(q.now)} so far` : q.kind === 'flag' ? 'So far so good' : q.kind === 'count' ? `${q.now} of 5` : Math.round(q.progress * 100) + '%'}</span></div><div class="pace-bar thin"><div class="pace-fill ${q.done ? 'pace-good' : q.failed ? 'pace-critical' : 'pace-neutral'}" style="width:${Math.round(q.progress * 100)}%"></div></div></div>`).join('')}
+    <div class="eyebrow" style="margin-top:18px">Unlocked · ${all.length}</div>
+    ${all.length ? all.slice().reverse().map(a => `<div class="ach-row"><span>${esc(a.title)}</span><span class="tiny muted">${esc(a.sub)}</span></div>`).join('') : '<div class="sub">Nothing yet. They appear here as you reach them.</div>'}
+    <div class="tiny muted" style="margin-top:12px">New achievements show up briefly at the top of the screen, once.</div>`);
 }
 function sipCard(m, compact) {
   const sp = D.sip; if (!sp?.slots.length) return '';
   const sm = sp.months[m];
   const badMonths = Object.entries(sp.months).filter(([, v]) => v.missed > 0);
-  const st = { paid: ['✅', 'Paid'], due: ['⏳', 'Due'], missed: ['❌', 'Bounced'], partial: ['⚠️', 'Part paid'], unknown: ['…', 'Not in statement yet'] };
-  const rows = sm ? sm.rows.map(r => `<tr><td>${st[r.status][0]} ${r.count > 1 ? r.count + '× ' : ''}${inr(r.amount)}<div class="tiny muted">${esc(r.name)}</div></td><td class="tiny">${dLabel(r.dueDate)}</td><td class="r tiny">${st[r.status][1]}</td></tr>`).join('') : '';
-  const alert = sm?.missed ? `<div class="alert a-bad"><span>🚨</span><span><b>${inr(sm.missed)} of SIPs bounced in ${mLabel(m, true)}</b> ${sm.charges ? `and the bank charged ${inr(sm.charges, 2)} for it. ` : ''}Keep the balance up before the ${[...new Set(sm.rows.filter(r => r.missedAmt).map(r => ord(r.day)))].join(' and ')}.</span></div>` : '';
-  const history = badMonths.length ? `<div class="tiny muted" style="margin-top:6px">Missed so far: ${badMonths.map(([mm, v]) => `${mLabel(mm)} ${inr(v.missed)}${v.charges ? ` (+${inr(v.charges, 0)} charges)` : ''}`).join(', ')}.</div>` : `<div class="tiny muted" style="margin-top:6px">No bounced SIPs in your statements.</div>`;
+  const st = { paid: ['ok', 'Paid'], due: ['muted', 'Due'], missed: ['bad', 'Bounced'], partial: ['bad', 'Part paid'], unknown: ['muted', 'Not in statement yet'] };
+  const rows = sm ? sm.rows.map(r => `<tr><td>${r.count > 1 ? r.count + ' × ' : ''}${inr(r.amount)}<div class="tiny muted">${esc(r.name)}</div></td><td class="tiny">${dLabel(r.dueDate)}</td><td class="r tiny ${st[r.status][0]}">${st[r.status][1]}</td></tr>`).join('') : '';
+  const alert = sm?.missed ? `<div class="alert a-bad"><span><b>${inr(sm.missed)} bounced in ${mLabel(m, true)}</b>${sm.charges ? `The bank charged ${inr(sm.charges, 2)}. ` : ''}Keep the balance up before the ${[...new Set(sm.rows.filter(r => r.missedAmt).map(r => ord(r.day)))].join(' and ')}.</span></div>` : '';
+  const history = badMonths.length ? `<div class="tiny muted" style="margin-top:8px">Missed so far: ${badMonths.map(([mm, v]) => `${mLabel(mm)} ${inr(v.missed)}${v.charges ? ` (+${inr(v.charges, 0)} charges)` : ''}`).join(', ')}.</div>` : `<div class="tiny muted" style="margin-top:8px">No bounced SIPs in your statements.</div>`;
   return `<div class="card">
-    <h2>📈 SIPs <small>${money(sp.monthly)} / month</small></h2>
+    <h2>SIPs <small>${money(sp.monthly)} a month</small></h2>
     ${alert}
     ${rows ? `<table class="mini">${rows}</table>` : ''}
     ${history}
-    ${compact ? '' : `<div class="tiny muted" style="margin-top:6px">Found from auto-debits that repeat on the same day each month. They count as savings, and your extra savings goal sits on top.</div>`}
+    ${compact ? '' : `<div class="tiny muted" style="margin-top:6px">Found from auto-debits that repeat on the same day each month. They count as savings; your extra savings goal sits on top.</div>`}
   </div>`;
 }
 function suspenseCard() {
@@ -270,9 +310,9 @@ function suspenseCard() {
   const total = s.filter(x => x.dir === 'D').reduce((a, x) => a + x.amt, 0);
   const sugg = s.filter(x => S.lookups[x.payee]?.status === 'hit' || x.family).length;
   return `<div class="card">
-    <h2>❓ Suspense <small>${s.length} payees</small></h2>
+    <h2>Suspense <small>${s.length} payees</small></h2>
     <div class="sub">${inr(total)} of spending couldn't be matched to a category yet. Sort the biggest ones and the rest of your numbers get sharper.${sugg ? ` ${sugg} have a suggestion ready.` : ''}</div>
-    <button class="btn primary block" style="margin-top:10px" data-action="open-suspense">Sort Suspense</button>
+    <button class="btn block" style="margin-top:10px" data-action="open-suspense">Sort Suspense</button>
   </div>`;
 }
 const hpIcon = s => ({ good: '💚', warning: '🟡', serious: '🟠', critical: '🔴' }[s]);
@@ -347,13 +387,13 @@ function viewPlan() {
       ${c.sts.monthlyAllowance > 0 ? `<div class="you" style="left:${pct(c.sts.monthlyAllowance)}%" title="Your everyday budget"></div>` : ''}
     </div>`;
   }
-  const risk = fc && c.sts.monthlyAllowance > 0 ? (fc.high <= c.sts.monthlyAllowance ? ['good', '✅', 'Even a heavy month fits your everyday budget.'] : fc.mid <= c.sts.monthlyAllowance ? ['warn', '⚠️', 'A typical month fits, but a heavy month would go over budget.'] : ['bad', '🚨', 'A typical month already goes over your everyday budget. Trim a category or lower the savings goal.']) : null;
+  const risk = fc && c.sts.monthlyAllowance > 0 ? (fc.high <= c.sts.monthlyAllowance ? ['good', '', 'Even a heavy month fits your everyday budget.'] : fc.mid <= c.sts.monthlyAllowance ? ['warn', '', 'A typical month fits, but a heavy month would go over budget.'] : ['bad', '', 'A typical month already goes over your everyday budget. Trim a category or lower the savings goal.']) : null;
   return `
   <div class="card">
     <h2>Next 30 days: everyday spending <small>80% range</small></h2>
     ${fc ? `${band}
       <div class="sub">Most likely about <b>${money(fc.mid)}</b>, and 8 times out of 10 between ${money(fc.low)} and ${money(fc.high)}. Built from your last ${fc.basisDays} days of spending (average ${money(fc.dailyAvg)} a day, ${fc.zeroDays} no-spend days), excluding fixed costs and one-offs above ${fmtPlain(S.settings.oneOff)}.</div>
-      ${risk ? `<div class="alert a-${risk[0]}"><span>${risk[1]}</span><span>${risk[2]} <span class="muted">(black line = your budget of ${fmtPlain(c.sts.monthlyAllowance)})</span></span></div>` : ''}` : '<div class="sub">Add statements to see a forecast.</div>'}
+      ${risk ? `<div class="alert a-${risk[0]}"><span>${risk[2]} <span class="muted">(black line = your budget of ${fmtPlain(c.sts.monthlyAllowance)})</span></span></div>` : ''}` : '<div class="sub">Add statements to see a forecast.</div>'}
   </div>
 
   <div class="card">
@@ -386,8 +426,8 @@ function viewFx() {
   <div class="card">
     <h2>Australian dollar today <small>${S.fx.manual ? 'your rate' : S.fx.last ? (S.fx.last.live ? '<span class="live-dot"></span>Live · ' + new Date(S.fx.last.fetchedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : esc(S.fx.last.source) + ' · ' + dLabel(S.fx.last.date)) : ''}</small></h2>
     ${r ? `<div class="hero-num num">₹${r.toFixed(2)}</div><div class="hero-aud">for 1 AUD · ₹1 = A$${(1 / r).toFixed(4)}</div>` : `<div class="sub">No rate yet.</div>`}
-    ${S.fx.error ? `<div class="alert a-warn"><span>📡</span><span><b>Couldn't reach the rate service.</b>${esc(S.fx.error)} Enter today's rate from your bank or Wise below and it will be used everywhere.</span></div>` : ''}
-    ${st.alerts.map(a => `<div class="alert a-${a.tone}"><span>${a.icon}</span><span><b>${a.title}</b>${a.body}</span></div>`).join('')}
+    ${S.fx.error ? `<div class="alert a-warn"><span><b>Couldn't reach the rate service.</b>${esc(S.fx.error)} Enter today's rate from your bank or Wise below and it will be used everywhere.</span></div>` : ''}
+    ${st.alerts.map(a => `<div class="alert a-${a.tone}"><span><b>${a.title}</b>${a.body}</span></div>`).join('')}
     ${S.fx.day?.date === today() && S.fx.last?.live && !S.fx.manual ? `<div class="tiny muted" style="margin-top:6px">Today so far: low ₹${S.fx.day.low.toFixed(2)} · high ₹${S.fx.day.high.toFixed(2)}</div>` : ''}
     <div class="grid2" style="margin-top:10px">
       <div class="stat"><div class="k">7-day low / high</div><div class="v num">${st.week ? `₹${st.week.low.toFixed(2)} – ${st.week.high.toFixed(2)}` : '–'}</div></div>
@@ -395,8 +435,8 @@ function viewFx() {
     </div>
     <div id="fxChart" style="margin-top:12px"></div>
     ${st.series.length ? tableView(['Date', '₹ per A$'], st.series.slice(-30).reverse().map(p => [dLabel(p.date), p.rate.toFixed(2)])) : ''}
-    <div class="btn-row" style="margin-top:12px"><button class="btn small" data-action="fx-refresh">↻ Refresh</button>
-      <button class="btn small" data-action="fx-notify">${S.settings.notify ? '🔔 Alerts on' : '🔕 Turn on alerts'}</button></div>
+    <div class="btn-row" style="margin-top:12px"><button class="btn small" data-action="fx-refresh">Refresh</button>
+      <button class="btn small" data-action="fx-notify">${S.settings.notify ? 'Alerts on' : 'Turn on alerts'}</button></div>
     <div class="tiny muted" style="margin-top:8px">The live rate is the mid-market rate from Coinbase, refreshed every minute while RupeeRoo is open. The 7- and 30-day lows and highs use European Central Bank daily rates (frankfurter.dev). Your bank or Wise adds a margin on top. Alerts only fire while this page is open.</div>
   </div>
   <div class="card">
@@ -484,11 +524,11 @@ function workCards() {
   const meter = st.rule === 'limited' ? `
     <div class="row" style="margin-top:10px"><span class="tiny muted">Busiest fortnight that includes today</span><b class="num">${fmtH(st.used)} / ${L} h</b></div>
     <div class="hp" style="margin-top:6px" role="meter" aria-valuemin="0" aria-valuemax="${L}" aria-valuenow="${st.used}"><div class="status-${tone}" style="width:${Math.max(2, Math.min(100, st.used / L * 100))}%"></div></div>
-    <div class="tiny muted" style="margin-top:6px">${st.used > L ? `⛔ ${fmtH(st.used - L)} h over the limit.` : st.used >= L ? '🛑 You\'ve hit the limit. No more hours until this fortnight rolls over.' : `You can work <b>${fmtH(st.left)} more hours</b> this week without breaking either fortnight.`}</div>
+    <div class="tiny muted" style="margin-top:6px">${st.used > L ? `${fmtH(st.used - L)} h over the limit.` : st.used >= L ? 'You\'ve hit the limit. No more hours until this fortnight rolls over.' : `You can work <b>${fmtH(st.left)} more hours</b> this week without breaking either fortnight.`}</div>
     <table class="mini" style="margin-top:8px">${st.wins.map(w => `<tr><td>${dLabel(w.from)} – ${dLabel(w.to)}${w.mixed ? ' <span class="tag">TERM STARTS/ENDS</span>' : ''}</td><td class="r">${fmtH(w.hours)} h</td><td class="r tiny">${w.limited ? (w.hours > L ? '❌ over' : w.hours >= V.RULES.warnAt ? '⚠️ close' : '✅') : 'no limit'}</td></tr>`).join('')}</table>` : '';
   const alerts = [];
-  st.breaches.forEach(w => alerts.push(['a-bad', '⛔', `Over the limit: ${fmtH(w.hours)} h from ${dLabel(w.from)} to ${dLabel(w.to)}`, 'More than 48 hours in a fortnight during term can breach visa condition 8105. Talk to UNSW Student Support before it happens again.']));
-  if (st.beforeStart.length) alerts.push(['a-bad', '⛔', `${st.beforeStart.length} shift(s) logged before your course starts`, 'Work before the course start date isn\'t allowed on a student visa. Check the date or remove them.']);
+  st.breaches.forEach(w => alerts.push(['a-bad', '', `Over the limit: ${fmtH(w.hours)} h from ${dLabel(w.from)} to ${dLabel(w.to)}`, 'More than 48 hours in a fortnight during term can breach visa condition 8105. Talk to UNSW Student Support before it happens again.']));
+  if (st.beforeStart.length) alerts.push(['a-bad', '', `${st.beforeStart.length} shift(s) logged before your course starts`, 'Work before the course start date isn\'t allowed on a student visa. Check the date or remove them.']);
   const futureCheck = sy.shifts.filter(x => x.date > t).map(x => x.date);
   const plannedBreach = st.history.filter(w => w.limited && w.hours > L && w.to >= t);
   if (plannedBreach.length && !st.breaches.some(b => b.to < t)) { /* already shown */ }
@@ -500,10 +540,10 @@ function workCards() {
   const ruleHere = V.dayRule(formDate, cal);
   return `
   <div class="card">
-    <h2>🎓 Work rights <small>student visa 500</small></h2>
-    <div class="alert a-${tone === 'good' ? 'good' : tone === 'warning' ? 'warn' : 'bad'}" style="margin-top:0"><span>${tone === 'good' ? '✅' : tone === 'warning' ? '🟡' : '🛑'}</span><span><b>${head}</b>${sub}</span></div>
+    <h2>Work rights <small>student visa 500</small></h2>
+    <div class="alert a-${tone === 'good' ? 'good' : tone === 'warning' ? 'warn' : 'bad'}" style="margin-top:0"><span><b>${head}</b>${sub}</span></div>
     ${meter}
-    ${alerts.map(a => `<div class="alert ${a[0]}"><span>${a[1]}</span><span><b>${esc(a[2])}</b>${esc(a[3])}</span></div>`).join('')}
+    ${alerts.map(a => `<div class="alert ${a[0]}"><span><b>${esc(a[2])}</b>${esc(a[3])}</span></div>`).join('')}
     <details class="table-view"><summary>The rules this uses (checked ${V.RULES.checked})</summary>
       <ul class="tiny" style="padding-left:18px;color:var(--text-secondary)">
         <li>No work before your course starts.</li>
@@ -528,7 +568,7 @@ function workCards() {
       <div><label class="field">Pay for this shift (A$, optional)</label><input class="input num" type="number" step="0.01" inputmode="decimal" id="shPay" placeholder="from hourly rate"></div>
     </div>
     <label class="switch"><span class="tiny">Compulsory placement for my course (doesn't count to the limit)</span><input type="checkbox" id="shWil"></label>
-    <div class="tiny muted">${ruleHere === 'before' ? '⛔ This date is before your course starts.' : ruleHere === 'limited' ? `On this date you can add up to <b>${fmtH(maxHere)} h</b> and stay within the limit.` : 'No limit applies on this date.'}</div>
+    <div class="tiny muted">${ruleHere === 'before' ? 'This date is before your course starts.' : ruleHere === 'limited' ? `On this date you can add up to <b>${fmtH(maxHere)} h</b> and stay within the limit.` : 'No limit applies on this date.'}</div>
     <button class="btn primary block" style="margin-top:10px" data-action="add-shift">Add shift</button>
     ${shiftsSorted.length ? `<table class="mini" style="margin-top:12px"><tr><th>Date</th><th>Job</th><th class="r">Hours</th><th class="r">Pay</th><th></th></tr>
       ${shiftsSorted.slice(0, S.ui.shiftLimit || 12).map(x => `<tr><td>${dLabel(x.date)}${x.date > t ? ' <span class="tag">PLANNED</span>' : ''}${x.wil ? ' <span class="tag">PLACEMENT</span>' : ''}<div class="tiny muted">${V.dayRule(x.date, cal) === 'limited' ? 'term' : V.dayRule(x.date, cal) === 'before' ? 'before course' : 'break'}</div></td><td class="tiny">${esc(job(x.jobId)?.name || '–')}</td><td class="r">${fmtH(+x.hours)}</td><td class="r">${audFmt(V.shiftPay(x, sy.jobs).toFixed(2))}</td><td class="r"><button class="btn small" data-action="del-shift" data-id="${x.id}" aria-label="Delete shift">✕</button></td></tr>`).join('')}</table>
@@ -536,7 +576,7 @@ function workCards() {
   </div>
 
   <div class="card">
-    <h2>💵 Work income <small>${esc(ern.fyLabel)}</small></h2>
+    <h2>Work income <small>${esc(ern.fyLabel)}</small></h2>
     <div class="grid2">
       <div class="stat"><div class="k">This week · ${fmtH(ern.weekHrs)} h</div><div class="v">${audMoney(ern.week)}</div></div>
       <div class="stat"><div class="k">This month · ${fmtH(ern.monthHrs)} h</div><div class="v">${audMoney(ern.month)}</div></div>
@@ -551,7 +591,7 @@ function workCards() {
   </div>
 
   <div class="card">
-    <h2>📅 Term dates <small>UNSW</small></h2>
+    <h2>Term dates <small>UNSW</small></h2>
     <div class="inline-inputs">
       <div><label class="field">Arrival in Australia</label><input class="input" type="date" data-sy="arrival" value="${sy.arrival || ''}"></div>
       <div><label class="field">Course starts</label><input class="input" type="date" data-sy="courseStart" value="${sy.courseStart}"></div>
@@ -580,7 +620,7 @@ function checkWorkAlerts(added) {
   else if (worst >= V.RULES.warnAt) notifyUser(`${fmtH(worst)} of 48 hours used`, `${fmtH(V.RULES.limit - worst)} hours left this fortnight.`);
 }
 function notifyUser(title, body) {
-  toast((title.startsWith('Over') || title.includes('before') ? '⛔ ' : '⚠️ ') + title, 6000);
+  toast(title, 6000);
   try { if (S.settings.notify && 'Notification' in window && Notification.permission === 'granted') new Notification('RupeeRoo · ' + title, { body }); } catch (e) { /* not allowed here */ }
 }
 
@@ -727,32 +767,32 @@ function suspenseSheet(keepScroll) {
   const spendCats = E.CATEGORIES.filter(c => !INCOME_CATS.includes(c.id) && c.id !== 'suspense');
   const inCats = E.CATEGORIES.filter(c => [...INCOME_CATS, 'transfer'].includes(c.id) && c.id !== 'suspense_in');
   openSheet(`
-    <div class="row"><h2>❓ Sort Suspense</h2><button class="btn small" data-action="close-sheet">Done</button></div>
+    <div class="row"><h2>Sort Suspense</h2><button class="btn small" data-action="close-sheet">Done</button></div>
     <div class="sub">Pick a category once and every payment to or from that payee follows it, including future statements.</div>
     <div class="card" style="margin:12px 0;padding:12px">
-      <b style="font-size:14px">🔎 Look up shops online</b>
+      <b style="font-size:14px">Look up shops online</b>
       <div class="tiny muted" style="margin:4px 0 8px">Sends only the shop names you tick below to OpenStreetMap, one per second. It finds chains and well-mapped places; most small stalls won't be listed. Results are suggestions, nothing changes until you accept.</div>
       <div class="inline-inputs"><input class="input" id="lookupCity" value="${esc(S.settings.city)}" placeholder="City"><button class="btn primary" data-action="${lookupRunning ? 'lookup-stop' : 'lookup-run'}">${lookupRunning ? 'Stop' : `Look up ${list.filter(x => x.shop && S.ui.lookupPick?.[x.key] !== false && !S.lookups[x.payee]).length} ticked`}</button></div>
       <div id="lookupProgress" class="tiny muted" style="margin-top:6px">${S.ui.lookupMsg || ''}</div>
     </div>
-    ${ready.length ? `<button class="btn block" data-action="accept-all">✅ Accept all ${ready.length} suggestions</button>` : ''}
+    ${ready.length ? `<button class="btn block" data-action="accept-all">Accept all ${ready.length} suggestions</button>` : ''}
     <div style="margin-top:8px">${list.map(x => {
       const sug = suggestionFor(x); const lk = S.lookups[x.payee];
       const cats = x.dir === 'D' ? spendCats : inCats;
-      const tag = x.family ? '👪 same surname' : x.shop ? '🏪 shop' : x.person ? '👤 person' : '';
+      const tag = x.family ? 'same surname' : x.shop ? 'shop' : x.person ? 'person' : '';
       return `<div class="txn" style="grid-template-columns:1fr auto;cursor:default">
         <div style="min-width:0"><div class="t1" data-action="txn" data-id="${esc(x.sample.id)}" style="cursor:pointer;text-decoration:underline dotted">${esc(x.name)} <span class="tag">${x.dir === 'D' ? 'PAID' : 'RECEIVED'}</span></div>
           <div class="t2">${x.n}× · ${tag}${x.vpa ? ' · ' + esc(x.vpa) : ''} · last ${dLabel(x.last)}</div>
-          ${sug ? `<div class="tiny" style="margin-top:4px">💡 ${esc(sug.why)} → <b>${E.CAT[sug.cat].icon} ${E.CAT[sug.cat].label}</b> <button class="btn small" data-action="accept-sug" data-k="${esc(x.key)}">Use</button></div>` : lk?.status === 'miss' ? '<div class="tiny muted" style="margin-top:4px">Not found on OpenStreetMap</div>' : ''}
+          ${sug ? `<div class="tiny" style="margin-top:4px">Suggestion: ${esc(sug.why)} → <b>${E.CAT[sug.cat].icon} ${E.CAT[sug.cat].label}</b> <button class="btn small" data-action="accept-sug" data-k="${esc(x.key)}">Use</button></div>` : lk?.status === 'miss' ? '<div class="tiny muted" style="margin-top:4px">Not found on OpenStreetMap</div>' : ''}
           <div class="btn-row" style="margin-top:6px;align-items:center">
             <select class="input" style="width:auto;padding:6px 8px;font-size:13px" data-suspense="${esc(x.key)}"><option value="">Choose category…</option>${cats.map(c => `<option value="${c.id}">${c.icon} ${c.label}</option>`).join('')}</select>
-            <a class="btn small" href="${webSearchUrl(x.name, x.vpa, S.settings.city)}" target="_blank" rel="noopener noreferrer">🌐 Search web</a>
+            <a class="btn small" href="${webSearchUrl(x.name, x.vpa, S.settings.city)}" target="_blank" rel="noopener noreferrer">Search web</a>
             ${x.shop && !lk ? `<label class="tiny"><input type="checkbox" data-lookpick="${esc(x.key)}" ${S.ui.lookupPick?.[x.key] === false ? '' : 'checked'}> look up</label>` : ''}
           </div></div>
         <div class="amt ${x.dir === 'C' ? 'pos' : ''}"><span class="num">${inr(x.amt)}</span><span class="aud num">${aud(x.amt)}</span></div></div>`;
     }).join('')}</div>
     ${all.length > limit ? `<button class="btn block" style="margin-top:10px" data-action="suspense-more">Show ${Math.min(40, all.length - limit)} more (${all.length - limit} left)</button>` : ''}
-    ${!all.length ? '<div class="sub" style="margin-top:12px">🎉 Suspense is empty. Everything has a category.</div>' : ''}`);
+    ${!all.length ? '<div class="sub" style="margin-top:12px">Suspense is empty. Everything has a category.</div>' : ''}`);
   if (top) $('#sheet .sheet-body').scrollTop = top;
 }
 function suggestionFor(x) {
@@ -799,7 +839,7 @@ function settingsSheet() {
     <label class="switch"><span>Theme</span><select class="input" style="width:auto" data-action="theme">${['auto', 'light', 'dark'].map(t => `<option ${S.settings.theme === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
     <label class="field">Count one transfer to someone else above this as "large transfer" and leave it out of spending (₹)</label>
     <input class="input num" type="number" id="bigTransfer" value="${S.settings.bigTransfer}">
-    <h3>✨ Claude suggestions</h3>
+    <h3>Claude suggestions</h3>
     <div class="sub">When you write what a payment was, Claude can suggest a category. It sees only your note, the payee name, amount and date, never account numbers or balances.</div>
     ${typeof window.claude?.use === 'function' ? '<div class="tiny ok" style="margin-top:6px">✓ Running inside Claude, so this works without a key.</div>' : ''}
     <label class="field">Anthropic API key (for the GitHub version)</label>
@@ -807,8 +847,8 @@ function settingsSheet() {
     <div class="tiny muted" style="margin-top:6px">Create one at console.anthropic.com → API keys, and set a small monthly spend limit there. Each suggestion costs a fraction of a cent. The key stays in this browser only and is never included in backups.</div>
     <h3>Backup</h3>
     <div class="sub">Everything lives in this browser only. Export a backup before clearing your browser or switching phones.</div>
-    <div class="btn-row" style="margin-top:8px"><button class="btn" data-action="export">⬇️ Export backup</button><button class="btn" data-action="import-json">⬆️ Restore backup</button></div>
-    <div class="btn-row" style="margin-top:8px"><button class="btn danger" data-action="clear-data">🗑️ Delete all data</button><button class="btn" data-action="load-demo">Load demo data</button>${window.RUPEEROO_SEED ? '<button class="btn" data-action="reload-seed">Reload my statements</button>' : ''}</div>
+    <div class="btn-row" style="margin-top:8px"><button class="btn" data-action="export">Export backup</button><button class="btn" data-action="import-json">⬆️ Restore backup</button></div>
+    <div class="btn-row" style="margin-top:8px"><button class="btn danger" data-action="clear-data">Delete all data</button><button class="btn" data-action="load-demo">Load demo data</button>${window.RUPEEROO_SEED ? '<button class="btn" data-action="reload-seed">Reload my statements</button>' : ''}</div>
     <div class="btn-row" style="margin-top:16px"><button class="btn primary" data-action="save-settings">Done</button></div>
     <div class="tiny muted" style="margin-top:14px">RupeeRoo reads PDFs with Mozilla pdf.js on your device. The page is only allowed to contact the exchange-rate services (Coinbase, frankfurter.dev, open.er-api.com) and, when you ask it to look up shops, OpenStreetMap.</div>`);
 }
@@ -830,7 +870,7 @@ async function getPdfjs() {
 }
 function askPassword(name, wrong) {
   return new Promise(res => {
-    openSheet(`<h2>🔐 ${esc(name)} is password protected</h2><div class="sub">${wrong ? '<b class="bad">That password didn’t work.</b> ' : ''}SBI usually uses the last 5 digits of your mobile number + your date of birth (DDMMYY). The password stays on this device.</div>
+    openSheet(`<h2>${esc(name)} is password protected</h2><div class="sub">${wrong ? '<b class="bad">That password didn’t work.</b> ' : ''}SBI usually uses the last 5 digits of your mobile number + your date of birth (DDMMYY). The password stays on this device.</div>
       <input class="input" type="password" id="pdfPw" autocomplete="off" style="margin-top:10px"><div class="btn-row" style="margin-top:10px"><button class="btn primary" id="pwOk">Open</button><button class="btn" id="pwCancel">Skip file</button></div>`);
     $('#pwOk').onclick = () => { const v = $('#pdfPw').value; closeSheet(); res(v); };
     $('#pwCancel').onclick = () => { closeSheet(); res(null); };
@@ -851,14 +891,14 @@ async function importFiles(files) {
       try { pages = await extractPages(lib, buf.slice(), pw); break; }
       catch (e) {
         if (e?.name === 'PasswordException') { pw = await askPassword(f.name, wrong); wrong = true; if (pw == null) break; continue; }
-        results.push(`❌ ${f.name}: couldn't read this PDF (${e.message || e}).`); break;
+        results.push(`${f.name}: couldn't read this PDF (${e.message || e}).`); break;
       }
     }
     if (!pages) continue;
     const bank = detectBank(pages);
-    if (!bank) { results.push(`❌ ${f.name}: not an SBI or IndusInd statement, or it's a scanned image.`); continue; }
+    if (!bank) { results.push(`${f.name}: not an SBI or IndusInd statement, or it's a scanned image.`); continue; }
     const r = parseStatement(pages, bank);
-    if (!r.txns.length) { results.push(`❌ ${f.name}: found no transactions. The layout may have changed.`); continue; }
+    if (!r.txns.length) { results.push(`${f.name}: found no transactions. The layout may have changed.`); continue; }
     const existing = new Set(S.txns.map(t => t.id));
     let dupes = 0;
     for (const t of r.txns) {
@@ -870,7 +910,7 @@ async function importFiles(files) {
     if (r.holder && !S.settings.holderNames.some(n => n.toUpperCase() === r.holder.toUpperCase())) S.settings.holderNames.push(r.holder);
     r.checks.dupes = dupes;
     S.statements.push({ bank, acct: r.acct, from: r.checks.from, to: r.checks.to, checks: r.checks, importedAt: today() });
-    results.push(`✅ ${bank}${r.acct ? ' ••' + r.acct : ''}: ${r.txns.length - dupes} new rows${r.checks.balanceBreaks ? `, ⚠️ ${r.checks.balanceBreaks} balance mismatches` : ', all balances check out'}${r.checks.summaryMatch ? ', matches bank totals' : ''}.`);
+    results.push(`${bank}${r.acct ? ' ••' + r.acct : ''}: ${r.txns.length - dupes} new rows${r.checks.balanceBreaks ? `, ${r.checks.balanceBreaks} balance mismatches` : ', all balances check out'}${r.checks.summaryMatch ? ', matches bank totals' : ''}.`);
   }
   $('#toast').hidden = true;
   S.ui.month = null;
@@ -913,7 +953,7 @@ function checkFxAlerts() {
     if (S.fx.notified[k]) continue;
     S.fx.notified[k] = 1; save();
     try { if ('Notification' in window && Notification.permission === 'granted') new Notification('RupeeRoo · ' + a.title, { body: a.plain, tag: a.key }); } catch (e) { /* not allowed here */ }
-    toast('🔔 ' + a.title, 5000);
+    toast(a.title, 5000);
   }
 }
 
@@ -932,6 +972,7 @@ document.addEventListener('click', async e => {
     case 'close-sheet': closeSheet(); break;
     case 'open-settings': settingsSheet(); break;
     case 'chips-scroll': { const row = el.parentElement.querySelector('.chips'); row.scrollBy({ left: +el.dataset.dir * row.clientWidth * 0.7, behavior: 'smooth' }); break; }
+    case 'open-achievements': achievementsSheet(); break;
     case 'open-suspense': S.ui.suspenseLimit = 40; suspenseSheet(); break;
     case 'suspense-more': S.ui.suspenseLimit = (S.ui.suspenseLimit || 40) + 40; suspenseSheet(true); break;
     case 'lookup-run': runLookup(); break;
