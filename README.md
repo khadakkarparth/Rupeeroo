@@ -15,12 +15,13 @@ exchange-rate APIs. There is no server and no account.
 | Import | Reads SBI and IndusInd PDF statements (password-protected ones too). Every row is checked against the running balance; SBI imports are also reconciled with the bank's own debit/credit totals. Re-importing the same statement skips duplicates. |
 | Categories | Rules for Indian payees (UPI handles, Swiggy, Blinkit, NACH SIPs, FASTag, etc.). Fix one transaction and the rule is remembered for that payee. Transfers between your own accounts are matched across banks and left out of spending. |
 | Suspense & lookup | Anything the built-in merchant list can't name goes to Suspense. A review screen sorts payees biggest first: pick a category once per payee, accept suggestions (same surname → Family, or an OpenStreetMap match), or tap Search web. The OpenStreetMap lookup only sends shop names you tick, one per second, and never applies a result without your OK. |
+| Notes & Claude | Write what a payment was ("dinner with college friends") and the app suggests a category from your words instantly, on the device. Ask Claude for up to three options with reasons; if neither is sure it stays in Suspense. Claude sees only the note, payee, amount and date. Works inside claude.ai without a key, or on the GitHub site with your own Anthropic API key stored only in your browser. |
 | SIPs | Finds each SIP instalment (amount and day of month) from repeating auto-debits, shows this month's paid / due / bounced status, and flags bounced SIPs with the bank's penalty charges. SIPs count as savings; an extra savings goal sits on top. |
 | Dashboard | Spending by month and by category, with a table view for every chart. |
 | Plan | Fixed costs found from payments that repeat with the same amount in 3+ months. A 30-day forecast of everyday spending built by resampling your last 90 days (10th–90th percentile range). Safe to spend = income − fixed − savings goal − spent so far. |
 | ₹ / A$ | Every amount in both currencies. Live mid-market rate from Coinbase's public API, refreshed every minute while the app is open, with today's low and high. 7- and 30-day lows and highs from ECB daily rates (frankfurter.dev; fallback open.er-api.com). Alerts when the rate is near a low or high. Manual rate entry when offline. |
 | Game layer | Budget health bar, under-budget streaks, no-spend days, monthly quests set from last month's numbers, and levels for savings milestones up to "Sydney Ready". |
-| Sydney mode | Visa living-cost check against AUD 29,710, a 48-hours-per-fortnight work tracker, and an education loan EMI view with moratorium interest. |
+| Sydney mode | Visa living-cost check against AUD 29,710. A student-visa work tracker: shifts and pay across jobs, the 48-hour limit checked over every Monday-start fortnight while the course is in session, unlimited hours in UNSW term breaks (2027 terms and 2028 semesters preloaded, editable), no work before the course starts, alerts as you approach or pass the limit, income by week, month and Australian financial year with a resident tax estimate. Education loan EMI view with moratorium interest. |
 
 ## Run it
 
@@ -52,6 +53,8 @@ index.html            app shell and Content Security Policy
 css/app.css           mobile-first styles, light and dark
 js/parser.js          PDF → transactions (SBI, IndusInd) and checks
 js/engine.js          categories, transfers, recurring costs, forecast, game, loan maths
+js/visa.js            student visa work rules, term calendar, earnings and tax estimate
+js/assist.js          category suggestions from your note (local rules + Claude)
 js/lookup.js          optional OpenStreetMap lookup for shop names
 js/fx.js              live rate (Coinbase), daily history (ECB), lows/highs and alerts
 js/app.js             UI, storage, import flow
