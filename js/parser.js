@@ -215,14 +215,16 @@ function findHolder(pages, bank) {
 }
 /** Only the last four digits are ever kept. */
 function findAccount(pages, bank) {
-  const items = pages[0]?.items || [];
-  const lab = items.find(i => /^Account (Number|No\.?)$/i.test(i.s));
-  let num = '';
-  if (lab) {
-    const cands = items.filter(i => /^\d{9,18}$/.test(i.s) && Math.abs(i.y - lab.y) < 3 && i.x > lab.x);
-    num = cands[0]?.s || '';
-    if (!num) num = items.filter(i => /^\d{9,18}$/.test(i.s) && i.y < lab.y && i.y > lab.y - 40)[0]?.s || '';
+  // the label can sit on page 1 or, in newer SBI layouts, after a summary page
+  for (const page of pages.slice(0, 3)) {
+    const items = page.items;
+    const lab = items.find(i => /^Account (Number|No\.?)$/i.test(i.s));
+    if (!lab) continue;
+    const same = items.filter(i => /^\d{9,18}$/.test(i.s) && Math.abs(i.y - lab.y) < 3 && i.x > lab.x);
+    const below = items.filter(i => /^\d{9,18}$/.test(i.s) && i.y < lab.y && i.y > lab.y - 40);
+    const num = same[0]?.s || below[0]?.s;
+    if (num) return num.slice(-4);
   }
-  if (!num) num = items.find(i => /^\d{11,18}$/.test(i.s))?.s || '';
-  return num ? num.slice(-4) : '';
+  const any = (pages[0]?.items || []).find(i => /^\d{11,18}$/.test(i.s));
+  return any ? any.s.slice(-4) : '';
 }
