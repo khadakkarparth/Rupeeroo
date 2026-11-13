@@ -274,3 +274,16 @@ details.explain[open] summary::after { content: ' ⌄'; }
 .demo-banner { background: var(--card); }
 
 .alert > span:empty { display: none; }
+
+/* multi-select */
+.txn.selmode { grid-template-columns: 22px 34px 1fr auto; }
+.txn .chk { width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--border-strong, var(--muted)); display: grid; place-items: center; font-size: 13px; font-weight: 700; color: var(--accent-ink); }
+.txn.picked .chk { background: var(--accent); border-color: var(--accent); }
+.txn.picked { background: color-mix(in srgb, var(--accent) 6%, transparent); border-radius: 10px; }
+.tickbox { display: grid; place-items: center; width: 26px; height: 26px; cursor: pointer; }
+.tickbox input { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+.bulkbar { position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); bottom: calc(70px + env(safe-area-inset-bottom)); width: min(560px, calc(100vw - 24px));
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px 10px 16px; border-radius: 14px;
+  background: var(--card); border: 1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,.16); font-size: 14px; }
+.sus-sticky { position: sticky; bottom: 0; z-index: 2; }
+.bulkbar.in-sheet { position: static; transform: none; width: auto; margin-top: 12px; }
