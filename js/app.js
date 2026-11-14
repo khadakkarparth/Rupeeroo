@@ -1,10 +1,10 @@
-import { extractPages, parseStatement, detectBank, counterparty, SUPPORTED_BANKS } from './parser.js?v=20261114n';
-import * as E from './engine.js?v=20261114n';
-import { fetchRatesLive, fxStats } from './fx.js?v=20261114n';
-import { makeDemo } from './demo.js?v=20261114n';
-import { lookupMany, webSearchUrl } from './lookup.js?v=20261114n';
-import * as V from './visa.js?v=20261114n';
-import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261114n';
+import { extractPages, parseStatement, detectBank, counterparty, SUPPORTED_BANKS } from './parser.js?v=20261114o';
+import * as E from './engine.js?v=20261114o';
+import { fetchRatesLive, fxStats } from './fx.js?v=20261114o';
+import { makeDemo } from './demo.js?v=20261114o';
+import { lookupMany, webSearchUrl } from './lookup.js?v=20261114o';
+import * as V from './visa.js?v=20261114o';
+import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261114o';
 
 const VISA_LIVING_AUD = 29710; // Home Affairs 12-month living cost for a primary student (checked Nov 2026)
 const WORK_LIMIT = 48;         // hours per fortnight while the course is in session (condition 8105)
@@ -938,7 +938,13 @@ document.addEventListener('pointerdown', e => { const el = e.target.closest?.('[
 // ---------------- sheets ----------------
 // A transaction opened from a Home number goes back to that list when it closes.
 let sheetKind = null, returnTo = null;
-function openSheet(html, kind = null) { const s = $('#sheet'); s.querySelector('.sheet-body').innerHTML = html; s.hidden = false; sheetKind = kind; }
+function openSheet(html, kind = null) {
+  const s = $('#sheet');
+  // every sheet gets the same visible close button, so nobody has to know to tap outside
+  s.querySelector('.sheet-body').innerHTML = `<button class="sheet-x" data-action="close-sheet" aria-label="Close">×</button>` + html;
+  s.hidden = false; sheetKind = kind;
+  s.querySelector('.sheet-body').scrollTop = 0;
+}
 function closeSheet() {
   $('#sheet').hidden = true; sheetKind = null;
   if (returnTo) { const k = returnTo; returnTo = null; setTimeout(() => { if ($('#sheet').hidden && S.ui.tab === 'home') homeDetail(k); }, 0); }
@@ -1113,8 +1119,8 @@ function checkList(c) {
 let pdfjs;
 async function getPdfjs() {
   if (pdfjs) return pdfjs;
-  pdfjs = await import('../vendor/pdf.min.js?v=20261114n');
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261114n', import.meta.url).href;
+  pdfjs = await import('../vendor/pdf.min.js?v=20261114o');
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261114o', import.meta.url).href;
   return pdfjs;
 }
 function askPassword(name, wrong) {
