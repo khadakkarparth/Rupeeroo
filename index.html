@@ -9,7 +9,7 @@
 <!-- Privacy by construction: the page may only talk to the exchange-rate APIs. Statements never leave the device. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; connect-src 'self' https://api.coinbase.com https://api.frankfurter.dev https://api.frankfurter.app https://open.er-api.com https://nominatim.openstreetmap.org https://api.anthropic.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>RupeeRoo – private money tracker</title>
-<link rel="stylesheet" href="css/app.css?v=20261113i">
+<link rel="stylesheet" href="css/app.css?v=20261113j">
 <link rel="manifest" href="manifest.webmanifest">
 </head>
 <body>
@@ -17,7 +17,7 @@
   <header class="topbar">
     <button class="brand" data-tab="home" aria-label="RupeeRoo, go to dashboard"><span class="logo" aria-hidden="true">R</span><span>RupeeRoo</span></button>
     <div class="topbar-right">
-      <span id="fxPill" class="fx-pill" title="Exchange rate">…</span>
+      <span id="fxPill" class="fx-pill" title="Exchange rate · open Currency" data-tab="fx" role="link" tabindex="0">…</span>
       <button class="icon-btn" data-action="open-settings" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
     </div>
   </header>
@@ -37,6 +37,6 @@
 </div>
 <input type="file" id="pdfInput" accept="application/pdf,.pdf" multiple hidden>
 <input type="file" id="jsonInput" accept="application/json,.json" hidden>
-<script type="module" src="js/app.js?v=20261113i"></script>
+<script type="module" src="js/app.js?v=20261113j"></script>
 </body>
 </html>
