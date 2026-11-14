@@ -1,10 +1,10 @@
-import { extractPages, parseStatement, detectBank, counterparty, SUPPORTED_BANKS } from './parser.js?v=20261113j';
-import * as E from './engine.js?v=20261113j';
-import { fetchRatesLive, fxStats } from './fx.js?v=20261113j';
-import { makeDemo } from './demo.js?v=20261113j';
-import { lookupMany, webSearchUrl } from './lookup.js?v=20261113j';
-import * as V from './visa.js?v=20261113j';
-import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261113j';
+import { extractPages, parseStatement, detectBank, counterparty, SUPPORTED_BANKS } from './parser.js?v=20261114k';
+import * as E from './engine.js?v=20261114k';
+import { fetchRatesLive, fxStats } from './fx.js?v=20261114k';
+import { makeDemo } from './demo.js?v=20261114k';
+import { lookupMany, webSearchUrl } from './lookup.js?v=20261114k';
+import * as V from './visa.js?v=20261114k';
+import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261114k';
 
 const VISA_LIVING_AUD = 29710; // Home Affairs 12-month living cost for a primary student (checked Nov 2026)
 const WORK_LIMIT = 48;         // hours per fortnight while the course is in session (condition 8105)
@@ -607,7 +607,7 @@ function viewFx() {
       <div class="stat"><div class="k">30-day low / high</div><div class="v num">${st.month ? `₹${st.month.low.toFixed(2)} – ${st.month.high.toFixed(2)}` : '–'}</div></div>
     </div>
     <div id="fxChart" style="margin-top:12px"></div>
-    ${st.series.length ? tableView(['Date', '₹ per A$'], st.series.slice(-30).reverse().map(p => [dLabel(p.date), p.rate.toFixed(2)])) : ''}
+    ${st.series.length ? tableView(['Date', '₹ per A$'], (st.chart || st.series.slice(-30)).slice().reverse().map(p => [dLabel(p.date) + (p.live ? ' (live)' : ''), p.rate.toFixed(2)])) : ''}
     <div class="btn-row" style="margin-top:12px"><button class="btn small" data-action="fx-refresh">Refresh</button>
       <button class="btn small" data-action="fx-notify">${S.settings.notify ? 'Alerts on' : 'Turn on alerts'}</button></div>
     <div class="tiny muted" style="margin-top:8px">The live rate is the mid-market rate from Coinbase, refreshed every minute while RupeeRoo is open. The 7- and 30-day lows and highs use European Central Bank daily rates (frankfurter.dev). Your bank or Wise adds a margin on top. Alerts only fire while this page is open.</div>
@@ -811,7 +811,7 @@ function afterRender() {
   const mc = $('#monthChart');
   if (mc) mc.innerHTML = barChart(D.months.map(k => ({ key: k, label: mLabel(k), v: Math.max(0, D.mon[k].spend), tip: `<b>${mLabel(k, true)}</b><br>Spent ${inr(D.mon[k].spend)} ${aud(D.mon[k].spend) ? '(' + aud(D.mon[k].spend) + ')' : ''}<br>Income ${inr(D.mon[k].income)}` })), S.ui.month);
   const fc = $('#fxChart');
-  if (fc) { const st = fxStats(S.fx.history, rate(), S.settings.alertPct); fc.innerHTML = st.series.length > 1 ? lineChart(st.series.slice(-30)) : '<div class="tiny muted">The chart fills in as rates are collected.</div>'; }
+  if (fc) { const st = fxStats(S.fx.history, rate(), S.settings.alertPct); const pts = st.chart || st.series.slice(-30); fc.innerHTML = pts.length > 1 ? lineChart(pts) : '<div class="tiny muted">The chart fills in as rates are collected.</div>'; }
   const drop = $('#drop');
   if (drop) {
     drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
@@ -1051,8 +1051,8 @@ function checkList(c) {
 let pdfjs;
 async function getPdfjs() {
   if (pdfjs) return pdfjs;
-  pdfjs = await import('../vendor/pdf.min.js?v=20261113j');
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261113j', import.meta.url).href;
+  pdfjs = await import('../vendor/pdf.min.js?v=20261114k');
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261114k', import.meta.url).href;
   return pdfjs;
 }
 function askPassword(name, wrong) {

@@ -89,6 +89,11 @@ export function fxStats(history, current, pct = 0.25) {
     return { low: Math.min(...pts), high: Math.max(...pts), n: pts.length };
   };
   out.week = win(7); out.month = win(30);
+  // the chart shows the same 30-day window as the cards, ending with today's live rate,
+  // so its low/high labels always match the numbers beside it
+  const d = new Date(), today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const recent = series.filter(p => lastDate - Date.parse(p.date) <= 29 * 864e5 && p.date < today);
+  out.chart = recent.concat({ date: today, rate: +current, live: true });
   const tol = pct / 100;
   const r = current.toFixed(2);
   const mk = (key, tone, icon, title, body) => out.alerts.push({ key, tone, icon, title, body: ' ' + body, plain: `A$1 = ₹${r}. ${body}` });
