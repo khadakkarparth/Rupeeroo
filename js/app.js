@@ -1,10 +1,10 @@
-import { extractPages, parseStatement, detectBank, counterparty, SUPPORTED_BANKS } from './parser.js?v=20261114m';
-import * as E from './engine.js?v=20261114m';
-import { fetchRatesLive, fxStats } from './fx.js?v=20261114m';
-import { makeDemo } from './demo.js?v=20261114m';
-import { lookupMany, webSearchUrl } from './lookup.js?v=20261114m';
-import * as V from './visa.js?v=20261114m';
-import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261114m';
+import { extractPages, parseStatement, detectBank, counterparty, SUPPORTED_BANKS } from './parser.js?v=20261114n';
+import * as E from './engine.js?v=20261114n';
+import { fetchRatesLive, fxStats } from './fx.js?v=20261114n';
+import { makeDemo } from './demo.js?v=20261114n';
+import { lookupMany, webSearchUrl } from './lookup.js?v=20261114n';
+import * as V from './visa.js?v=20261114n';
+import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261114n';
 
 const VISA_LIVING_AUD = 29710; // Home Affairs 12-month living cost for a primary student (checked Nov 2026)
 const WORK_LIMIT = 48;         // hours per fortnight while the course is in session (condition 8105)
@@ -190,7 +190,7 @@ function viewEmpty() {
     <div class="drop" id="drop" data-action="pick-pdf">
       <div class="big"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg></div>
       <div style="font-weight:650;font-size:16px;margin-top:6px">Add your bank statements</div>
-      <div class="sub" style="margin-top:4px">PDF statements from <b>SBI, HDFC, ICICI, Axis, Kotak, IDBI, IndusInd, PNB, Bank of Baroda, Canara, Union</b> and most other banks. Pick several at once.</div>
+      <div class="sub" style="margin-top:4px">PDF statements from <b>SBI, HDFC, ICICI, Axis, Kotak, IDBI, IDFC FIRST, IndusInd, PNB, Bank of Baroda, Canara, Union</b> and most other banks. Pick several at once.</div>
       <button class="btn primary" style="margin-top:14px" data-action="pick-pdf">Choose PDF files</button>
     </div>
     <div class="privacy"><span>Statements are read <b>on this device</b> and saved only in this browser. Nothing is uploaded. The only network call is for exchange rates.</span></div>
@@ -1076,8 +1076,9 @@ function settingsSheet() {
     <h2>Settings & data</h2>
     <div class="btn-row" style="margin:6px 0 4px"><button class="btn" data-action="open-achievements">Achievements</button><button class="btn" data-action="open-suspense">Sort payees</button></div>
     <h3>Statements imported</h3>
-    ${sts.length ? sts.map(s => `<div class="card" style="margin:8px 0;padding:12px"><div class="row"><b>${s.bank}${s.acct ? ' ••' + s.acct : ''}</b><span class="tiny muted">${dLabel(s.from)} – ${dLabel(s.to)} ${s.to.slice(0, 4)}</span></div>
-      <ul class="checks tiny" style="padding-left:18px;margin:6px 0 0">${checkList(s.checks).join('')}</ul></div>`).join('') : '<div class="sub">None yet.</div>'}
+    ${sts.length ? sts.map(s => `<div class="card" style="margin:8px 0;padding:12px"><div class="row"><b>${esc(s.bank)}${s.acct ? ' ••' + esc(s.acct) : ''}</b><span class="tiny muted">${dLabel(s.from)} – ${dLabel(s.to)} ${s.to.slice(0, 4)}</span></div>${s.checks?.holder ? `<div class="tiny muted">In the name of ${esc(s.checks.holder)}</div>` : ''}
+      <ul class="checks tiny" style="padding-left:18px;margin:6px 0 0">${checkList(s.checks).join('')}</ul>
+      <button class="link tiny" style="margin-top:6px" data-action="remove-acct" data-bank="${esc(s.bank)}" data-acct="${esc(s.acct || '')}">Remove this account's transactions</button></div>`).join('') : '<div class="sub">None yet.</div>'}
     <button class="btn block" data-action="pick-pdf">＋ Add statements</button>
     <h3>Your name on statements</h3>
     <div class="sub">Used to spot transfers between your own accounts.</div>
@@ -1103,7 +1104,7 @@ function settingsSheet() {
 function checkList(c) {
   const out = [`<li>${c.count} transactions (${c.drCount} debits, ${c.crCount} credits)</li>`];
   out.push(c.balanceBreaks ? `<li class="bad">${c.balanceBreaks} rows don't match the running balance</li>` : `<li class="ok">✓ Every row matches the running balance</li>`);
-  if (c.summary) out.push(c.summaryMatch ? `<li class="ok">✓ Matches the bank's own summary: debits ${inr(c.summary.totalDebit, 2)}, credits ${inr(c.summary.totalCredit, 2)}</li>` : `<li class="bad">Bank summary differs: ${c.summary.drCount}/${c.summary.crCount} rows, ${inr(c.summary.totalDebit, 2)} / ${inr(c.summary.totalCredit, 2)}</li>`);
+  if (c.summary) out.push(c.summaryMatch ? `<li class="ok">✓ Matches the bank's own summary: debits ${inr(c.summary.totalDebit, 2)}, credits ${inr(c.summary.totalCredit, 2)}</li>` : `<li class="bad">Bank summary differs: ${c.summary.drCount != null ? `${c.summary.drCount}/${c.summary.crCount} rows, ` : ''}debits ${inr(c.summary.totalDebit, 2)}, credits ${inr(c.summary.totalCredit, 2)}</li>`);
   if (c.dupes) out.push(`<li>${c.dupes} rows were already imported and skipped</li>`);
   return out;
 }
@@ -1112,8 +1113,8 @@ function checkList(c) {
 let pdfjs;
 async function getPdfjs() {
   if (pdfjs) return pdfjs;
-  pdfjs = await import('../vendor/pdf.min.js?v=20261114m');
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261114m', import.meta.url).href;
+  pdfjs = await import('../vendor/pdf.min.js?v=20261114n');
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261114n', import.meta.url).href;
   return pdfjs;
 }
 function askPassword(name, wrong) {
@@ -1131,6 +1132,7 @@ async function importFiles(files) {
   if (S.demo) { const keep = { settings: S.settings, fx: S.fx, sydney: S.sydney }; S = deepMerge(defaults(), keep); S.demo = false; }
   const lib = await getPdfjs();
   const results = [];
+  const warnings = [];
   for (const f of files) {
     toast(`Reading ${f.name}…`, 60000);
     const buf = new Uint8Array(await f.arrayBuffer());
@@ -1157,8 +1159,16 @@ async function importFiles(files) {
       existing.add(id);
       S.txns.push({ id, bank, acct: r.acct, date: t.date, type: t.type, desc: t.desc, ref: t.ref, debit: t.debit, credit: t.credit, balance: t.balance, seq: t.seq });
     }
-    if (r.holder && !S.settings.holderNames.some(n => n.toUpperCase() === r.holder.toUpperCase())) S.settings.holderNames.push(r.holder);
+    // a statement in someone else's name must not teach RupeeRoo that their name is yours,
+    // or every payment between the two of you would vanish as an "own transfer"
+    if (r.holder && !S.settings.holderNames.some(n => n.toUpperCase() === r.holder.toUpperCase())) {
+      const toks = n => n.toUpperCase().replace(/^(MR|MRS|MS|MISS|DR)\.?\s+/, '').split(/\s+/).filter(w => w.length >= 3);
+      const mine = S.settings.holderNames.flatMap(toks);
+      if (!mine.length || toks(r.holder).some(w => mine.includes(w))) S.settings.holderNames.push(r.holder);
+      else warnings.push({ bank, acct: r.acct, holder: r.holder });
+    }
     r.checks.dupes = dupes;
+    r.checks.holder = r.holder || '';
     S.statements.push({ bank, acct: r.acct, from: r.checks.from, to: r.checks.to, checks: r.checks, importedAt: today() });
     results.push(`${bank}${r.acct ? ' ••' + r.acct : ''}: ${r.txns.length - dupes} new rows${r.checks.balanceBreaks ? `, ${r.checks.balanceBreaks} rows don't match the running balance, so check those` : ', all balances check out'}${r.checks.summaryMatch ? ', matches bank totals' : ''}.`);
   }
@@ -1166,6 +1176,8 @@ async function importFiles(files) {
   S.ui.month = null;
   derive(); save(); render();
   openSheet(`<h2>Import finished</h2><div class="stack" style="margin-top:8px">${results.map(r => `<div class="sub">${esc(r)}</div>`).join('')}</div>
+    ${warnings.map(w => `<div class="alert a-warn holder-warn" style="margin-top:10px;display:block"><div><b>This ${esc(w.bank)} statement is in the name of ${esc(w.holder)}</b>, not ${esc(S.settings.holderNames[0] || 'you')}. It's now part of your totals and balance. If it isn't your account, remove it.</div>
+      <div class="btn-row" style="margin-top:8px"><button class="btn small" data-action="remove-acct" data-bank="${esc(w.bank)}" data-acct="${esc(w.acct || '')}">Remove this statement</button><button class="btn small" data-action="own-holder" data-name="${esc(w.holder)}">It's my joint account</button></div></div>`).join('')}
     <div class="sub" style="margin-top:10px">Tip: tap any transaction to fix its category. RupeeRoo will remember it for that payee.</div>
     <div class="btn-row" style="margin-top:12px"><button class="btn primary" data-action="close-sheet">See my dashboard</button></div>`);
 }
@@ -1238,6 +1250,15 @@ document.addEventListener('click', async e => {
     case 'cat': S.ui.catFilter = el.dataset.c || null; save(); render(); document.querySelector('.search')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); break;
     case 'txn': if (sheetKind?.startsWith('detail:') && !$('#sheet').hidden) returnTo = sheetKind.slice(7); txnSheet(el.dataset.id); break;
     case 'home-detail': homeDetail(el.dataset.k); break;
+    case 'remove-acct': {
+      const b = el.dataset.bank, a = el.dataset.acct || '';
+      if (el.dataset.sure !== '1') { el.dataset.sure = '1'; el.textContent = 'Tap again to remove'; break; }
+      const before = S.txns.length;
+      S.txns = S.txns.filter(t => !(t.bank === b && (t.acct || '') === a));
+      S.statements = S.statements.filter(st => !(st.bank === b && (st.acct || '') === a));
+      S.ui.month = null; derive(); save(); closeSheet(); render(); toast(`Removed ${before - S.txns.length} ${b} rows`); break;
+    }
+    case 'own-holder': { const n = el.dataset.name; if (n && !S.settings.holderNames.includes(n)) S.settings.holderNames.push(n); derive(); save(); el.closest('.alert')?.remove(); render(); toast('Added as your account'); break; }
     case 'month-pick': monthPicker(); break;
     case 'att-more': el.previousElementSibling.classList.remove('collapsible'); el.remove(); break;
     case 'syd-seg': S.ui.syd = el.dataset.s; save(); render(); break;

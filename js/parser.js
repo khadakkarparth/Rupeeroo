@@ -68,6 +68,7 @@ const BANKS = [
   ['Axis', /AXIS BANK/, /UTIB0/],
   ['Kotak', /KOTAK MAHINDRA BANK|KOTAK BANK/, /KKBK0/],
   ['IDBI', /IDBI BANK/, /IBKL0/],
+  ['IDFC FIRST', /IDFC FIRST BANK|IDFC BANK/, /IDFB0/],
   ['PNB', /PUNJAB NATIONAL BANK/, /PUNB0/],
   ['BoB', /BANK OF BARODA/, /BARB0/],
   ['Canara', /CANARA BANK/, /CNRB0/],
@@ -222,12 +223,40 @@ function runChecks(txns, pages) {
   };
   // SBI prints a statement summary we can reconcile against
   const summary = findSbiSummary(pages);
+  const box = summary ? null : findBoxSummary(pages);
+  if (box) {
+    // "Opening Balance · Total Debit · Total Credit · Closing Balance" box (IDFC FIRST, Kotak, others)
+    res.summary = box;
+    const first = txns[0], last = txns[txns.length - 1];
+    const openOk = box.opening == null || !first || Math.abs(round2(first.balance + first.debit - first.credit) - box.opening) < 0.02;
+    const closeOk = box.closing == null || !last || Math.abs(last.balance - box.closing) < 0.02;
+    res.summaryMatch = Math.abs(box.totalDebit - res.totalDebit) < 0.02 && Math.abs(box.totalCredit - res.totalCredit) < 0.02 && openOk && closeOk;
+  }
   if (summary) {
     res.summary = summary;
     res.summaryMatch = summary.drCount === res.drCount && summary.crCount === res.crCount &&
       Math.abs(summary.totalDebit - res.totalDebit) < 0.02 && Math.abs(summary.totalCredit - res.totalCredit) < 0.02;
   }
   return res;
+}
+
+function findBoxSummary(pages) {
+  const num = s => { const m = s.replace(/[₹,\s]|INR|Rs\.?/gi, '').match(/^-?\d+(\.\d+)?$/); return m ? parseFloat(m[0]) : null; };
+  for (const page of pages.slice(0, 2)) {
+    const lines = groupLines(page.items, 2.6);
+    for (let k = 0; k < lines.length - 1; k++) {
+      const labs = lines[k].items;
+      const td = labs.find(i => /^total\s*(debits?|withdrawals?)(\s*amount)?$/i.test(i.s));
+      const tc = labs.find(i => /^total\s*(credits?|deposits?)(\s*amount)?$/i.test(i.s));
+      if (!td || !tc) continue;
+      const vals = lines.slice(k + 1, k + 3).flatMap(l => l.items).filter(i => num(i.s) != null && lines[k].y - i.y < 30);
+      const near = lab => { if (!lab) return null; const c = lab.x + (lab.w || lab.s.length * 4.5) / 2; const v = vals.map(i => ({ i, d: Math.abs(i.x + (i.w || i.s.length * 4.5) / 2 - c) })).sort((a, b) => a.d - b.d)[0]; return v && v.d < 90 ? num(v.i.s) : null; };
+      const op = labs.find(i => /^opening\s*balance$/i.test(i.s)), cl = labs.find(i => /^closing\s*balance$/i.test(i.s));
+      const out = { totalDebit: near(td), totalCredit: near(tc), opening: near(op), closing: near(cl) };
+      if (out.totalDebit != null && out.totalCredit != null) return out;
+    }
+  }
+  return null;
 }
 
 function findSbiSummary(pages) {
@@ -489,10 +518,17 @@ function findHolder(pages, bank) {
   for (const it of items) {
     const m = it.s.match(/^(?:customer\s*|account\s*holder\s*|a\/c\s*)?name\s*[:\-]?\s*(.*)$/i);
     if (!m) continue;
-    let v = m[1].replace(/^[:\-\s]+/, '');
-    if (!v) v = items.find(j => Math.abs(j.y - it.y) < 3 && j.x > it.x && !/^:$/.test(j.s))?.s.replace(/^[:\-\s]+/, '') || '';
-    v = v.replace(/^(MR|MS|MRS|MISS)\.?\s+/i, '').trim();
-    if (/^[A-Za-z][A-Za-z .]{3,}$/.test(v)) return v.toUpperCase();
+    // the value sits beside the label, or right under it (IndusInd); never another form label
+    const LABEL = /\b(status|holding|holder|branch|address|type|nominee|number|no\.?|date|id|code|ifsc|micr|mode|scheme|currency|period|email|phone|mobile|customer|account|statement|balance)\b/i;
+    const clean = x => (x || '').replace(/^[:\-\s]+/, '').replace(/^(MR|MS|MRS|MISS)\.?\s+/i, '').trim();
+    const ok = x => /^[A-Za-z][A-Za-z .]{3,}$/.test(x) && !LABEL.test(x) && x.split(/\s+/).length <= 5;
+    let v = clean(m[1]);
+    if (!v) {
+      const beside = items.filter(j => Math.abs(j.y - it.y) < 3 && j.x > it.x && j.x - it.x < 260 && !/^:$/.test(j.s)).sort((a, b) => a.x - b.x)[0];
+      const under = items.filter(j => j.y < it.y && it.y - j.y < 32 && Math.abs(j.x - it.x) < 30).sort((a, b) => b.y - a.y)[0];
+      v = [beside, under].map(j => clean(j?.s)).find(ok) || '';
+    }
+    if (ok(v)) return v.toUpperCase();
   }
   if (bank === 'IndusInd') {
     const k = items.findIndex(i => /^Account Statement$/i.test(i.s));
