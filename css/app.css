@@ -43,7 +43,7 @@ button { cursor: pointer; }
 .brand { display: flex; gap: 8px; align-items: center; font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
 .logo { font-size: 22px; }
 .topbar-right { display: flex; gap: 8px; align-items: center; }
-.fx-pill { font-size: 13px; padding: 6px 10px; border-radius: 999px; background: var(--card); border: 1px solid var(--border); color: var(--text-secondary); white-space: nowrap; }
+.fx-pill { cursor: pointer; font-size: 13px; padding: 6px 10px; border-radius: 999px; background: var(--card); border: 1px solid var(--border); color: var(--text-secondary); white-space: nowrap; }
 .icon-btn { border: 1px solid var(--border); background: var(--card); border-radius: 999px; width: 36px; height: 36px; display: grid; place-items: center; font-size: 16px; }
 
 main { max-width: 560px; margin: 0 auto; padding: 4px 14px calc(96px + env(safe-area-inset-bottom)); outline: none; }
