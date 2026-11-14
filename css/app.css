@@ -431,3 +431,4 @@ button.brand { background: none; border: 0; padding: 0; color: inherit; font: in
 /* reading-width pages (Money, Plan, Sydney, empty state) stay narrow on big screens; only Home uses two panes */
 @media (min-width: 840px) { body:not([data-view="home"]) .topbar, body:not([data-view="home"]) main { max-width: 680px; } }
 .page-head { display: flex; justify-content: center; margin: 4px 0 8px; }
+.holder-warn b { display: inline; }
