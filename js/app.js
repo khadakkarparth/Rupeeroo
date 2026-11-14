@@ -1,10 +1,10 @@
-import { extractPages, parseStatement, detectBank, counterparty, SUPPORTED_BANKS } from './parser.js?v=20261113i';
-import * as E from './engine.js?v=20261113i';
-import { fetchRatesLive, fxStats } from './fx.js?v=20261113i';
-import { makeDemo } from './demo.js?v=20261113i';
-import { lookupMany, webSearchUrl } from './lookup.js?v=20261113i';
-import * as V from './visa.js?v=20261113i';
-import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261113i';
+import { extractPages, parseStatement, detectBank, counterparty, SUPPORTED_BANKS } from './parser.js?v=20261113j';
+import * as E from './engine.js?v=20261113j';
+import { fetchRatesLive, fxStats } from './fx.js?v=20261113j';
+import { makeDemo } from './demo.js?v=20261113j';
+import { lookupMany, webSearchUrl } from './lookup.js?v=20261113j';
+import * as V from './visa.js?v=20261113j';
+import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261113j';
 
 const VISA_LIVING_AUD = 29710; // Home Affairs 12-month living cost for a primary student (checked Nov 2026)
 const WORK_LIMIT = 48;         // hours per fortnight while the course is in session (condition 8105)
@@ -170,7 +170,15 @@ function render() {
   $('#banner').innerHTML = S.demo ? `<div class="demo-banner"><span>You're looking at <b>demo data</b>.</span><button class="btn small" data-action="clear-data">Use my own</button></div>` : '';
   const v = $('#view');
   if (!S.txns.length && !['fx', 'sydney'].includes(S.ui.tab)) { v.innerHTML = viewEmpty(); return; }
-  v.innerHTML = ({ home: viewHome, spend: viewSpend, plan: viewPlan, fx: viewFx, sydney: viewSydney })[S.ui.tab]();
+  // rows can arrive mid-import (or from another tab) before derive() has run
+  if (S.txns.length && (!D || !S.ui.month || !D.mon?.[S.ui.month])) derive();
+  const view = ({ home: viewHome, spend: viewSpend, plan: viewPlan, fx: viewFx, sydney: viewSydney })[S.ui.tab] || viewHome;
+  try { v.innerHTML = view(); }
+  catch (err) {
+    console.error(err);
+    v.innerHTML = `<div class="card"><h2>Something went wrong on this screen</h2><div class="sub">Your data is safe. Try another tab, or reload the page.</div><div class="tiny muted" style="margin-top:8px">${esc(String(err && err.message || err))}</div></div>`;
+    return;
+  }
   afterRender();
 }
 
@@ -792,7 +800,9 @@ function notifyUser(title, body) {
 // ---------------- charts ----------------
 function afterRender() {
   document.querySelectorAll('.chips').forEach(row => {
-    const on = row.querySelector('.chip.on'); if (on) row.scrollLeft = on.offsetLeft - row.clientWidth / 2 + on.clientWidth / 2;
+    const on = row.querySelector('.chip.on');
+    const centre = () => { if (!on || !row.isConnected) return; const a = row.getBoundingClientRect(), b = on.getBoundingClientRect(); row.scrollTo({ left: row.scrollLeft + (b.left - a.left) - (a.width - b.width) / 2, behavior: 'instant' }); syncChipNav(row); };
+    centre(); requestAnimationFrame(centre); document.fonts?.ready.then(centre);
     syncChipNav(row);
     row.addEventListener('scroll', () => syncChipNav(row), { passive: true });
     // let a mouse wheel scroll the row sideways on desktop
@@ -1041,8 +1051,8 @@ function checkList(c) {
 let pdfjs;
 async function getPdfjs() {
   if (pdfjs) return pdfjs;
-  pdfjs = await import('../vendor/pdf.min.js?v=20261113i');
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261113i', import.meta.url).href;
+  pdfjs = await import('../vendor/pdf.min.js?v=20261113j');
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261113j', import.meta.url).href;
   return pdfjs;
 }
 function askPassword(name, wrong) {
@@ -1123,7 +1133,7 @@ async function refreshFx(manualClick) {
   if (!busy && $('#sheet').hidden) render(); else updateFxPill();
   if (manualClick) toast(res.ok ? `Rate updated: A$1 = ₹${res.rate.toFixed(2)}` : 'Rate service unreachable. You can enter the rate yourself.');
 }
-function updateFxPill() { const r = rate(); $('#fxPill').innerHTML = r ? `${S.fx.last?.live && !S.fx.manual ? '<span class="live-dot" aria-label="live"></span>' : ''}A$1 = ₹${r.toFixed(2)}` : 'A$ rate: set'; }
+function updateFxPill() { const r = rate(); $('#fxPill').innerHTML = r ? `${S.fx.last?.live && !S.fx.manual ? '<span class="live-dot" aria-label="live"></span>' : ''}A$1 = ₹${r.toFixed(2)}` : 'Set A$ rate'; }
 function checkFxAlerts() {
   const st = fxStats(S.fx.history, rate(), S.settings.alertPct);
   if (!S.settings.notify || !st.alerts.length) return;
@@ -1252,7 +1262,11 @@ document.addEventListener('input', e => {
     else { S.ui.convInr = +el.value * r; document.querySelector('[data-conv="inr"]').value = Math.round(+el.value * r); }
   }
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeSheet();
+  // non-button links (the rate pill) open with Enter/Space like a button
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('[role="link"][data-tab]')) { e.preventDefault(); e.target.click(); }
+});
 $('#pdfInput').addEventListener('change', e => { importFiles([...e.target.files]); e.target.value = ''; });
 $('#jsonInput').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
