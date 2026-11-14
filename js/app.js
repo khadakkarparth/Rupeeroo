@@ -1,10 +1,10 @@
-import { extractPages, parseStatement, detectBank, counterparty, SUPPORTED_BANKS } from './parser.js?v=20261114l';
-import * as E from './engine.js?v=20261114l';
-import { fetchRatesLive, fxStats } from './fx.js?v=20261114l';
-import { makeDemo } from './demo.js?v=20261114l';
-import { lookupMany, webSearchUrl } from './lookup.js?v=20261114l';
-import * as V from './visa.js?v=20261114l';
-import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261114l';
+import { extractPages, parseStatement, detectBank, counterparty, SUPPORTED_BANKS } from './parser.js?v=20261114m';
+import * as E from './engine.js?v=20261114m';
+import { fetchRatesLive, fxStats } from './fx.js?v=20261114m';
+import { makeDemo } from './demo.js?v=20261114m';
+import { lookupMany, webSearchUrl } from './lookup.js?v=20261114m';
+import * as V from './visa.js?v=20261114m';
+import { localSuggest, claudeSuggest, claudeMaybeAvailable, getApiKey, setApiKey } from './assist.js?v=20261114m';
 
 const VISA_LIVING_AUD = 29710; // Home Affairs 12-month living cost for a primary student (checked Nov 2026)
 const WORK_LIMIT = 48;         // hours per fortnight while the course is in session (condition 8105)
@@ -256,8 +256,7 @@ function attentionRow(x) {
 function viewHome() {
   const m = S.ui.month, c = monthCtx(m), mo = c.mo;
   const left = balancesAt(m);
-  const dates = [...new Set(left.accts.map(x => x.date))];
-  const asOf = !left.accts.length ? 'no balance yet' : dates.length === 1 ? `as of ${dLabel(dates[0])}` : left.accts.map(x => `${esc(x.bank)} ${dLabel(x.date)}`).join(', ');
+  const asOf = !left.date ? 'no balance yet' : `as of ${dLabel(left.date)}${left.behind.length ? ', the last day all your statements cover' : left.accts.length > 1 ? ` · ${left.accts.length} accounts` : ''}`;
   const r = rate();
   const can = c.sts.remaining;
   const kept = mo.income - mo.spend - mo.invest;
@@ -270,7 +269,7 @@ function viewHome() {
       <button class="hero-bal" data-action="home-detail" data-k="left" aria-label="In your accounts ${fmtPlain(left.total)}, show accounts">
         <span class="hb-k">In your accounts</span>
         <span class="hb-v num ${left.total < 0 ? 'neg' : ''}">${fmtPlain(left.total)}</span>
-        <span class="hb-s">${r && S.settings.primary !== 'AUD' ? `≈ A$${Math.round(left.total / r).toLocaleString('en-AU')} · ` : ''}${dates.length > 1 ? left.accts.map(x => `${esc(x.bank)}${x.acct ? ' ••' + esc(x.acct) : ''} ${dLabel(x.date)}`).join(' · ') : `${asOf}${left.accts.length > 1 ? ` · ${left.accts.length} accounts` : ''}`}</span>
+        <span class="hb-s">${r && S.settings.primary !== 'AUD' ? `≈ A$${Math.round(left.total / r).toLocaleString('en-AU')} · ` : ''}${asOf}</span>
       </button>
       <button class="safe-line" data-action="home-detail" data-k="can">
         <span class="sl-k">Safe to spend${c.monthOver ? '' : ' this month'}</span>
@@ -308,12 +307,15 @@ function homeDetail(k) {
     html = head('Came in', mo.income, `${rows.length} payments received in ${mLabel(m, true)} · moves between your own accounts left out`) + list(rows, 'Nothing came in this month.');
   } else if (k === 'left') {
     const left = balancesAt(m);
-    html = head('In your accounts', left.total, `Last balance on each account up to the end of ${mLabel(m, true)}`) +
+    const later = left.accts.filter(a => a.coveredTo > left.date);
+    html = head('In your accounts', left.total, left.date ? `On ${dLabel(left.date)}${left.accts.length > 1 ? ', the last day all your statements cover, so every account is counted on the same day' : ''}` : 'No balance yet') +
       left.accts.map(a => {
         const rows = inMonth.filter(t => t.bank === a.bank && (t.acct || '') === (a.acct || ''));
-        return `<details class="acct-block" ${left.accts.length === 1 ? 'open' : ''}><summary><span><b>${esc(a.bank)}${a.acct ? ' ••' + esc(a.acct) : ''}</b><span class="muted tiny"> · as of ${dLabel(a.date)}</span></span><span class="num">${fmtPlain(a.bal)}</span></summary>
+        return `<details class="acct-block" ${left.accts.length === 1 ? 'open' : ''}><summary><span><b>${esc(a.bank)}${a.acct ? ' ••' + esc(a.acct) : ''}</b><span class="muted tiny"> · ${dLabel(left.date)}${a.latestDate > left.date ? ` · ${fmtPlain(a.latestBal)} on ${dLabel(a.latestDate)}` : ''}</span></span><span class="num">${fmtPlain(a.bal)}</span></summary>
           ${list(rows, `No ${esc(a.bank)} transactions in ${mLabel(m, true)}.`)}</details>`;
-      }).join('');
+      }).join('') +
+      (later.length && left.behind.length ? `<div class="tiny muted" style="margin-top:10px">${later.map(a => esc(a.bank)).join(' & ')} has transactions up to ${dLabel(later[0].latestDate)}, but ${left.behind.map(a => esc(a.bank)).join(' & ')} stops on ${dLabel(left.date)}. Adding balances from different days can count money twice when it moves between your accounts, so the total uses ${dLabel(left.date)} for every account.</div>
+        <div class="btn-row" style="margin-top:10px"><button class="btn" data-action="pick-pdf">Add a newer ${left.behind.map(a => esc(a.bank)).join(' & ')} statement</button></div>` : '');
   } else if (k === 'out') {
     const rows = inMonth.filter(t => kind(t) === 'spend');
     html = head('Spent', mo.spend, `${rows.length} payments in ${mLabel(m, true)} · SIPs and moves between your own accounts not included`) + list(rows, 'No spending this month.');
@@ -343,23 +345,46 @@ function homeDetail(k) {
   openSheet(html + `<div class="btn-row" style="margin-top:14px"><button class="btn" data-action="close-sheet">Close</button></div>`, 'detail:' + k);
 }
 
-/** Each account's running balance at the end of month m (or the last row before it). */
+/** The final balance in a set of rows (several rows can share the last date). */
+function closingRow(rows) {
+  const lastDate = rows.reduce((d, r) => (r.t.date > d ? r.t.date : d), '');
+  const same = rows.filter(r => r.t.date === lastDate);
+  const r2 = x => Math.round(x * 100) / 100;
+  // the final row is the one no other same-day row continues from
+  return same.find(c => !same.some(o => o !== c && r2(c.t.balance - o.t.debit + o.t.credit) === r2(o.t.balance))) ||
+    same.sort((a, b) => (a.t.seq ?? 0) - (b.t.seq ?? 0) || a.i - b.i)[same.length - 1];
+}
+/**
+ * A true snapshot of all accounts on one day: the last day every statement covers (capped at the end of month m).
+ * Adding balances from different days double-counts money moved between your accounts in the gap,
+ * so each account's balance is taken on that common day. Each account's later balance is kept for reference.
+ */
 function balancesAt(m) {
-  const end = m + '-31';
+  const end = m + '-' + String(daysIn(m)).padStart(2, '0');
   const by = new Map();
   S.txns.forEach((t, i) => { if (t.date <= end) { const k = t.bank + '|' + (t.acct || ''); (by.get(k) || by.set(k, []).get(k)).push({ t, i }); } });
-  const accts = [];
-  for (const rows of by.values()) {
-    const lastDate = rows.reduce((d, r) => (r.t.date > d ? r.t.date : d), '');
-    const same = rows.filter(r => r.t.date === lastDate);
-    // several rows on the last day: the final one is the row no other row continues from
-    const r2 = x => Math.round(x * 100) / 100;
-    const fin = same.find(c => !same.some(o => o !== c && r2(c.t.balance - o.t.debit + o.t.credit) === r2(o.t.balance))) ||
-      same.sort((a, b) => (a.t.seq ?? 0) - (b.t.seq ?? 0) || a.i - b.i)[same.length - 1];
-    accts.push({ bank: fin.t.bank, acct: fin.t.acct, date: lastDate, bal: fin.t.balance });
-  }
-  accts.sort((a, b) => b.date.localeCompare(a.date));
-  return { total: accts.reduce((s, x) => s + x.bal, 0), accts };
+  const groups = [...by.values()];
+  if (!groups.length) return { total: 0, date: null, accts: [], behind: [] };
+  // how far each account is covered: its statements' end dates (a quiet stretch with no transactions still counts)
+  const coverEnd = rows => {
+    const t0 = rows[0].t;
+    const stEnd = (S.statements || []).filter(st => st.bank === t0.bank && (st.acct || '') === (t0.acct || '')).reduce((d, st) => (st.to > d ? st.to : d), '');
+    const lastTxn = S.txns.reduce((d, t) => (t.bank === t0.bank && (t.acct || '') === (t0.acct || '') && t.date > d ? t.date : d), '');
+    const c = stEnd > lastTxn ? stEnd : lastTxn;
+    return c < end ? c : end;
+  };
+  const date = groups.map(coverEnd).sort()[0]; // the last day every statement covers
+  const accts = groups.map(rows => {
+    const latest = closingRow(rows);
+    const upto = rows.filter(r => r.t.date <= date);
+    let bal;
+    if (upto.length) bal = closingRow(upto).t.balance;
+    else { const first = [...rows].sort((a, b) => a.t.date.localeCompare(b.t.date) || (a.t.seq ?? 0) - (b.t.seq ?? 0))[0].t; bal = first.balance - first.credit + first.debit; } // opened later: balance before its first row
+    return { bank: latest.t.bank, acct: latest.t.acct, bal, latestDate: latest.t.date, latestBal: latest.t.balance };
+  }).sort((a, b) => b.bal - a.bal);
+  const covers = new Map(groups.map(rows => [rows[0].t.bank + '|' + (rows[0].t.acct || ''), coverEnd(rows)]));
+  accts.forEach(a => { a.coveredTo = covers.get(a.bank + '|' + (a.acct || '')); });
+  return { total: accts.reduce((s, x) => s + x.bal, 0), date, accts, behind: accts.filter(x => x.coveredTo === date && accts.some(y => y.coveredTo > date)) };
 }
 
 // ---------------- Achievements (quiet: pop up once, then live in their own sheet) ----------------
@@ -1087,8 +1112,8 @@ function checkList(c) {
 let pdfjs;
 async function getPdfjs() {
   if (pdfjs) return pdfjs;
-  pdfjs = await import('../vendor/pdf.min.js?v=20261114l');
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261114l', import.meta.url).href;
+  pdfjs = await import('../vendor/pdf.min.js?v=20261114m');
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.js?v=20261114m', import.meta.url).href;
   return pdfjs;
 }
 function askPassword(name, wrong) {
