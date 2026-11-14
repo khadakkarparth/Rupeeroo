@@ -432,3 +432,6 @@ button.brand { background: none; border: 0; padding: 0; color: inherit; font: in
 @media (min-width: 840px) { body:not([data-view="home"]) .topbar, body:not([data-view="home"]) main { max-width: 680px; } }
 .page-head { display: flex; justify-content: center; margin: 4px 0 8px; }
 .holder-warn b { display: inline; }
+.sheet-x { position: sticky; top: 0; float: right; z-index: 3; width: 40px; height: 40px; margin: -6px -6px 0 8px; border-radius: 50%; border: 1px solid var(--border);
+  background: var(--card); color: var(--muted); font-size: 22px; line-height: 1; display: grid; place-items: center; cursor: pointer; }
+.sheet-x:hover { color: var(--text-primary); background: var(--plane); }
